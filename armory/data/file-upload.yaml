@@ -1,0 +1,357 @@
+slug: file-upload
+name: File Upload Bypass
+owasp: A04:2021 – Insecure Design
+description: 'Insecure file upload implementations allow attackers to upload malicious files including web shells, server-side
+  scripts, and malware. When an attacker can upload and execute code on the server, the result is typically remote code execution.
+  File upload vulnerabilities arise from incomplete type validation, missing path restrictions, and insecure file serving
+  configurations. They represent one of the most direct paths to server compromise.
+
+  '
+severity_range:
+  low: CVSS 6.5
+  high: CVSS 9.8
+references:
+- label: OWASP File Upload Cheat Sheet
+  url: https://cheatsheetseries.owasp.org/cheatsheets/File_Upload_Cheat_Sheet.html
+- label: PortSwigger File Upload Vulnerabilities
+  url: https://portswigger.net/web-security/file-upload
+groups:
+- slug: extension-bypass
+  name: File Extension Bypass
+  description: Bypassing file extension allow/deny lists to upload executable server-side scripts.
+  difficulty: low
+  prerequisites:
+  - Application accepts file uploads
+  - Extension validation present but bypassable
+  payloads:
+  - id: fupload-ext-001
+    title: PHP extension alternatives
+    payload_string: shell.php5, shell.php7, shell.phtml, shell.phar, shell.phps, shell.php3, shell.php4
+    how_it_works: 'Apache and PHP support multiple file extensions that trigger PHP execution. A filter that blocks .php may
+      not block .php5, .php7, .phtml, .phar, or legacy .php3/.php4 extensions. If the web server is configured to execute
+      any of these as PHP (via AddType or FilesMatch directives), uploading with an alternative extension uploads a working
+      web shell. This is the most common bypass for PHP upload restrictions. Testing all alternative extensions systematically
+      is standard procedure.
+
+      '
+    prerequisites:
+    - PHP web server (Apache/Nginx with PHP-FPM)
+    - Filter blocks .php but not alternative PHP extensions
+    waf_bypass_notes: Server config determines which extensions execute; check .htaccess if writable
+    severity_context: CVSS 9.8 – web shell upload via alternative PHP extension
+    cve_refs:
+    - CVE-2018-9206
+    tags:
+    - file-upload
+    - extension-bypass
+    - php
+    - webshell
+    - rce
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: fupload-ext-002
+    title: Double extension bypass
+    payload_string: shell.jpg.php
+    how_it_works: 'Double extension files have two extensions where the last one determines execution. Apache processes shell.jpg.php
+      as PHP because .php is the executable extension. Some filters check only the last extension while servers process all
+      extensions. Conversely, shell.php.jpg may bypass filters checking the last extension if the server has a broad execution
+      policy. The behavior depends on the web server configuration. Testing both ordering (php.jpg and jpg.php) reveals which
+      configuration is vulnerable.
+
+      '
+    prerequisites:
+    - Filter checks only first or last extension
+    - Web server processes intermediate extensions
+    waf_bypass_notes: Server configuration dependent; test both orderings
+    severity_context: CVSS 9.8 – web shell via double extension bypass
+    cve_refs: []
+    tags:
+    - file-upload
+    - double-extension
+    - php
+    - apache
+    - webshell
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: fupload-ext-003
+    title: Case sensitivity extension bypass
+    payload_string: shell.PHP, shell.PhP, shell.pHp
+    how_it_works: 'On case-insensitive file systems (Windows NTFS, some Linux configurations) and with case-insensitive filters,
+      uppercase variants of blocked extensions bypass deny lists. Apache on Windows is case-insensitive and processes .PHP
+      identically to .php. A filter that uses lowercase comparison will block .php but allow .PHP, which the server then executes
+      as PHP. This is a trivial bypass for case-sensitive filters on case-insensitive systems.
+
+      '
+    prerequisites:
+    - Case-insensitive file system or Apache on Windows
+    - Filter uses case-sensitive string comparison
+    waf_bypass_notes: Case bypass; effective on Windows IIS and some Apache configurations
+    severity_context: CVSS 9.8 – web shell via case-insensitive extension bypass
+    cve_refs: []
+    tags:
+    - file-upload
+    - case-bypass
+    - windows
+    - case-insensitive
+    - php
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: fupload-ext-004
+    title: .htaccess upload for PHP execution
+    payload_string: 'Upload .htaccess containing: AddType application/x-httpd-php .jpg'
+    how_it_works: 'If an attacker can upload an .htaccess file to the upload directory, they can configure Apache to execute
+      any file type as PHP within that directory. Uploading a .htaccess with the AddType directive causes all .jpg files in
+      the directory to execute as PHP. The attacker then uploads a .jpg file containing PHP code. This two-step attack bypasses
+      all extension-based filtering because the uploaded shell is a seemingly valid image. .htaccess upload is only possible
+      in Apache with AllowOverride enabled.
+
+      '
+    prerequisites:
+    - Apache with AllowOverride enabled in upload directory
+    - .htaccess not blocked by upload filter
+    waf_bypass_notes: .htaccess is a two-step attack; blocks on filenames rarely include .htaccess
+    severity_context: CVSS 9.8 – Apache configuration manipulation for PHP execution of any file
+    cve_refs: []
+    tags:
+    - file-upload
+    - htaccess
+    - apache
+    - config-upload
+    - rce
+    - two-step
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: fupload-ext-005
+    title: JSP upload on Java servers
+    payload_string: shell.jsp, shell.jspx, shell.jsw, shell.jsv
+    how_it_works: 'Java application servers (Tomcat, GlassFish, JBoss) execute .jsp and .jspx files. A JSP web shell uploaded
+      to a deployable directory executes Java code with the application server''s privileges. JSP shells provide access to
+      the full Java runtime, allowing OS command execution, file system access, and network operations. On enterprise application
+      servers, this may run as a service account with domain privileges. Alternative extensions (.jsw, .jsv) may be processed
+      by some server configurations.
+
+      '
+    prerequisites:
+    - Java application server (Tomcat/JBoss/GlassFish)
+    - Upload directory accessible by server for JSP execution
+    waf_bypass_notes: Java-specific; JSP web shell is equivalent to PHP shell on Java servers
+    severity_context: CVSS 9.8 – JSP web shell on Java application server
+    cve_refs: []
+    tags:
+    - file-upload
+    - jsp
+    - java
+    - tomcat
+    - webshell
+    - rce
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+- slug: content-type-bypass
+  name: Content-Type and Magic Bytes Bypass
+  description: Bypassing MIME type validation by manipulating Content-Type headers or embedding valid magic bytes.
+  difficulty: medium
+  prerequisites:
+  - Application validates Content-Type or magic bytes
+  - Validation can be bypassed
+  payloads:
+  - id: fupload-ct-001
+    title: Content-Type header manipulation
+    payload_string: Change Content-Type from application/x-php to image/jpeg in upload request
+    how_it_works: 'The HTTP Content-Type header is attacker-controlled and can be modified to any value using an intercepting
+      proxy. Applications that trust the Content-Type header for file type validation can be bypassed by simply changing the
+      header to an allowed type (image/jpeg, image/png) while keeping the actual PHP file content. The server stores the file
+      with its original PHP content, and when accessed, executes it despite the incorrect Content-Type recorded during upload.
+      This is the simplest upload bypass.
+
+      '
+    prerequisites:
+    - Application validates Content-Type header without checking file content
+    waf_bypass_notes: Content-Type spoofing; always test alongside content-based validation
+    severity_context: CVSS 9.8 – web shell upload via Content-Type header manipulation
+    cve_refs:
+    - CVE-2017-5638
+    tags:
+    - file-upload
+    - content-type
+    - header-manipulation
+    - php
+    - basic
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: fupload-ct-002
+    title: Magic bytes prepend bypass
+    payload_string: GIF89a; <?php system($_GET['cmd']); ?>
+    how_it_works: 'Magic bytes are the first few bytes of a file that identify its type. GIF files begin with ''GIF89a''.
+      By prepending the GIF magic bytes to a PHP shell, the file passes magic byte validation (getimagesize() or similar)
+      while containing valid PHP code after the magic bytes. The PHP interpreter ignores non-PHP content and only executes
+      the <?php ?> blocks. This payload functions as both a valid GIF header (for validation) and an executable PHP web shell
+      when accessed through the web server.
+
+      '
+    prerequisites:
+    - Application checks magic bytes for image validation
+    - Uploaded file accessible via HTTP and served by PHP
+    waf_bypass_notes: Magic byte prepend bypasses getimagesize(); file still contains PHP code
+    severity_context: CVSS 9.8 – PHP shell disguised as GIF via magic byte prepend
+    cve_refs: []
+    tags:
+    - file-upload
+    - magic-bytes
+    - gif
+    - php
+    - polyglot-file
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: fupload-ct-003
+    title: Polyglot image/PHP file
+    payload_string: Create valid JPEG with PHP shell in EXIF Comment field
+    how_it_works: 'JPEG EXIF metadata fields, particularly the Comment, Artist, and Copyright fields, allow embedding arbitrary
+      text. Embedding PHP code in EXIF data creates a file that is a valid JPEG (passing magic byte and image library validation)
+      but also contains executable PHP. When served by a PHP-enabled web server and accessed as .php or via an include, the
+      EXIF PHP code executes. This creates a true polyglot file — valid as both an image and a PHP script.
+
+      '
+    prerequisites:
+    - Application validates JPEG structure but serves file as PHP-executable
+    - EXIF data preserved during upload processing
+    waf_bypass_notes: EXIF injection requires image library validation; exiftool creates these
+    severity_context: CVSS 9.8 – JPEG/PHP polyglot bypassing image library validation
+    cve_refs: []
+    tags:
+    - file-upload
+    - exif-injection
+    - polyglot
+    - jpeg
+    - php
+    - advanced
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: fupload-ct-004
+    title: SVG XSS via file upload
+    payload_string: <svg xmlns='http://www.w3.org/2000/svg'><script>alert(document.domain)</script></svg>
+    how_it_works: 'SVG is an XML-based image format that can contain JavaScript. When uploaded and served inline from the
+      same origin (not as an attachment), the browser executes embedded scripts. Even if the application correctly identifies
+      the file as SVG/XML, serving it with Content-Type: image/svg+xml from the same domain makes scripts execute in that
+      origin''s context. This converts a file upload vulnerability to stored XSS on the application''s domain. Many CDN and
+      storage configurations serve SVGs directly from the app domain.
+
+      '
+    prerequisites:
+    - SVG upload allowed
+    - SVG served inline from same origin (not attachment disposition)
+    waf_bypass_notes: SVG-based stored XSS; doesn't require execution as server-side code
+    severity_context: CVSS 7.5 – stored XSS via SVG file upload
+    cve_refs:
+    - CVE-2018-9206
+    tags:
+    - file-upload
+    - svg
+    - xss
+    - stored-xss
+    - same-origin
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: fupload-ct-005
+    title: ZIP path traversal (Zip Slip)
+    payload_string: 'ZIP file containing: ../../../../var/www/html/shell.php'
+    how_it_works: 'Zip Slip is a directory traversal vulnerability in ZIP file extraction. By creating a ZIP file with entries
+      that contain path traversal sequences (../../../../), when the application extracts the ZIP without sanitizing filenames,
+      files are written outside the intended extraction directory. A shell.php entry with a traversal path writes a web shell
+      to the web root. This affects any language''s ZIP extraction library that doesn''t normalize paths before writing (CVE-2018-1002200).
+
+      '
+    prerequisites:
+    - Application extracts ZIP files without path sanitization
+    - Extract destination writable and above web root
+    waf_bypass_notes: Zip Slip; archive content not typically inspected by WAF
+    severity_context: CVSS 9.8 – RCE via path traversal in ZIP extraction
+    cve_refs:
+    - CVE-2018-1002200
+    tags:
+    - file-upload
+    - zip-slip
+    - path-traversal
+    - archive
+    - rce
+    - cve
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+- slug: storage-bypass
+  name: Upload Storage and Serving Bypass
+  description: Attacks exploiting how uploaded files are stored and served, including path injection and race conditions.
+  difficulty: high
+  prerequisites:
+  - File upload functionality present
+  payloads:
+  - id: fupload-stor-001
+    title: Filename path traversal in upload
+    payload_string: filename="../../../etc/cron.d/backdoor"
+    how_it_works: 'When the server uses the client-supplied filename for storage (without sanitization), path traversal in
+      the filename writes files to arbitrary locations. Writing to /etc/cron.d/ creates a cron job running with root privileges.
+      Writing to /var/www/html/ creates a web shell accessible via HTTP. The Content-Disposition filename in multipart uploads
+      is fully attacker-controlled. Many frameworks sanitize filenames, but custom file handling code may not.
+
+      '
+    prerequisites:
+    - Server uses client filename directly for file storage
+    - No path sanitization on filename
+    waf_bypass_notes: 'filename= in multipart header; URL encode the traversal: ..%2F..%2F'
+    severity_context: CVSS 9.8 – arbitrary file write via filename path traversal
+    cve_refs: []
+    tags:
+    - file-upload
+    - path-traversal
+    - filename-injection
+    - cron
+    - arbitrary-write
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: fupload-stor-002
+    title: Race condition upload bypass
+    payload_string: Upload PHP shell, immediately request the file URL before deletion
+    how_it_works: 'Some applications upload the file, validate it, and delete it if malicious. If there''s a time window between
+      file creation and validation/deletion, an attacker can race to access the file before it''s deleted. By sending the
+      upload request and the access request simultaneously (multi-threaded), the PHP shell executes before the cleanup. Even
+      a brief execution allows writing a persistent web shell to a different location. This is a TOCTOU (Time-of-Check Time-of-Use)
+      race condition in file validation.
+
+      '
+    prerequisites:
+    - Application validates and deletes files post-upload
+    - Time window between upload and deletion
+    - Attacker can determine uploaded file URL
+    waf_bypass_notes: Race condition; Turbo Intruder in Burp Suite is ideal for this
+    severity_context: CVSS 8.5 – race condition upload bypass via TOCTOU exploitation
+    cve_refs:
+    - CVE-2018-9206
+    tags:
+    - file-upload
+    - race-condition
+    - toctou
+    - timing
+    - advanced
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: fupload-stor-003
+    title: Null byte in filename
+    payload_string: filename="shell.php%00.jpg"
+    how_it_works: 'In PHP and C-based systems, null bytes terminate strings at the C library level. A filename containing
+      shell.php%00.jpg is treated as shell.php by the file system write function (C string terminates at null), while the
+      extension filter may see the full string ending in .jpg and allow it. The file is stored as shell.php (the server-side
+      PHP executes when accessed). This is a classic PHP < 5.3.4 bypass and affects some CGI and native extension systems.
+
+      '
+    prerequisites:
+    - PHP < 5.3.4 or C-based file handling
+    - Extension filter checks full filename including post-null bytes
+    waf_bypass_notes: Null byte terminates the stored filename; legacy PHP-specific
+    severity_context: CVSS 9.8 – null byte filename bypass for PHP shell storage
+    cve_refs: []
+    tags:
+    - file-upload
+    - null-byte
+    - filename-injection
+    - php-legacy
+    - extension-bypass
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'

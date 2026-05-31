@@ -1,0 +1,411 @@
+slug: ssrf
+name: Server-Side Request Forgery (SSRF)
+owasp: A10:2021 – Server-Side Request Forgery
+description: 'SSRF vulnerabilities allow an attacker to cause the server to make HTTP requests to arbitrary internal or external
+  destinations. This bypasses network controls that restrict the attacker''s direct access to internal services. SSRF can
+  be used to enumerate internal networks, access cloud metadata APIs, pivot to internal services, and in some cases achieve
+  remote code execution via protocol smuggling or internal service exploitation.
+
+  '
+severity_range:
+  low: CVSS 5.8
+  high: CVSS 9.8
+references:
+- label: OWASP SSRF Prevention Cheat Sheet
+  url: https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html
+- label: PortSwigger SSRF Research
+  url: https://portswigger.net/web-security/ssrf
+groups:
+- slug: basic-ssrf
+  name: Basic SSRF
+  description: Direct SSRF payloads targeting internal networks, localhost services, and external OOB confirmation.
+  difficulty: medium
+  prerequisites:
+  - Application makes server-side HTTP requests based on user-supplied URL
+  - URL not validated or allowlisted
+  payloads:
+  - id: ssrf-basic-001
+    title: Localhost loopback SSRF
+    payload_string: http://127.0.0.1/
+    how_it_works: 'By pointing the SSRF to localhost (127.0.0.1), the attacker causes the server to make a request to itself.
+      This accesses services running on localhost that are not directly exposed to the internet, such as admin panels, internal
+      APIs, metrics endpoints, and database management interfaces. The response is typically returned to the attacker via
+      the application''s response. Accessing http://127.0.0.1:80 tests the web server itself while port variations probe other
+      internal services.
+
+      '
+    prerequisites:
+    - Application makes HTTP request to user-supplied URL
+    - Internal service accessible on localhost
+    waf_bypass_notes: Try 127.0.0.1, localhost, 0.0.0.0, ::1, [::1] as alternatives
+    severity_context: CVSS 7.5 – access to localhost services bypassing external firewall
+    cve_refs:
+    - CVE-2019-9978
+    tags:
+    - ssrf
+    - localhost
+    - internal-service
+    - basic
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: ssrf-basic-002
+    title: Internal network scan via SSRF
+    payload_string: http://192.168.1.1/
+    how_it_works: 'Private IP ranges (10.x.x.x, 172.16-31.x.x, 192.168.x.x) are internal network addresses unreachable from
+      the internet. SSRF causes the server to probe these internal addresses, effectively making the vulnerable server an
+      internal network scanner. By iterating IP addresses and ports, attackers map internal infrastructure including routers,
+      databases, internal APIs, development servers, and admin panels. Response time differences and HTTP status codes reveal
+      which hosts and ports are open.
+
+      '
+    prerequisites:
+    - SSRF reaches internal private IP ranges
+    waf_bypass_notes: 'Private IP ranges may be blocked; try decimal notation: 3232235777 = 192.168.1.1'
+    severity_context: CVSS 7.5 – internal network enumeration via SSRF
+    cve_refs:
+    - CVE-2017-9506
+    tags:
+    - ssrf
+    - internal-network
+    - scanning
+    - pivot
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: ssrf-basic-003
+    title: AWS EC2 metadata API
+    payload_string: http://169.254.169.254/latest/meta-data/iam/security-credentials/
+    how_it_works: 'AWS EC2 instances have a link-local metadata API at 169.254.169.254. This API provides instance metadata
+      including IAM role names and temporary security credentials (Access Key ID, Secret Access Key, Session Token). These
+      credentials grant API access to AWS services with the permissions of the EC2 instance''s IAM role. An attacker who obtains
+      these credentials can access S3 buckets, RDS databases, SSM parameters, and other AWS services the instance is authorized
+      to use.
+
+      '
+    prerequisites:
+    - Application runs on AWS EC2 or ECS
+    - SSRF can reach 169.254.169.254
+    - IMDSv1 enabled (or attacker can bypass IMDSv2 token requirement)
+    waf_bypass_notes: IMDSv2 requires a PUT request for token; try 169.254.169.254 variants
+    severity_context: CVSS 9.8 – AWS IAM credential theft via SSRF to metadata API
+    cve_refs:
+    - CVE-2021-21972
+    tags:
+    - ssrf
+    - aws
+    - metadata-api
+    - iam-credentials
+    - cloud
+    - critical
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: ssrf-basic-004
+    title: GCP metadata API SSRF
+    payload_string: http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token
+    how_it_works: 'Google Cloud Platform''s metadata server at metadata.google.internal provides service account tokens for
+      GCP API access. Unlike AWS, GCP''s metadata API requires a custom header (Metadata-Flavor: Google) for most endpoints,
+      but some legacy endpoints may not enforce this. The service account token enables access to GCS buckets, Cloud SQL,
+      Pub/Sub, and other GCP services. SSRF-based metadata theft has been exploited in several high-profile cloud breaches.
+
+      '
+    prerequisites:
+    - Application running on GCP (GCE, GKE, App Engine)
+    - SSRF can reach metadata.google.internal
+    - Metadata-Flavor header can be set (for newer endpoints)
+    waf_bypass_notes: 'Requires Metadata-Flavor: Google header; inject via SSRF header injection'
+    severity_context: CVSS 9.8 – GCP service account token theft via SSRF
+    cve_refs:
+    - CVE-2021-22986
+    tags:
+    - ssrf
+    - gcp
+    - metadata-api
+    - service-account
+    - cloud
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: ssrf-basic-005
+    title: Burp Collaborator OOB SSRF confirmation
+    payload_string: http://YOUR_COLLABORATOR_ID.burpcollaborator.net
+    how_it_works: 'When SSRF responses are not returned to the attacker (blind SSRF), out-of-band confirmation is required.
+      Burp Collaborator provides a unique domain that logs all DNS lookups and HTTP requests made to it. By triggering an
+      SSRF to the Collaborator domain, a DNS lookup and HTTP request appear in the Collaborator panel, confirming that the
+      server makes outbound requests. The Collaborator interaction log shows the originating IP, confirming which internal
+      service initiated the request.
+
+      '
+    prerequisites:
+    - 'Blind SSRF: server makes requests but response not returned'
+    - Burp Suite Professional with Collaborator
+    - Outbound DNS and HTTP from server
+    waf_bypass_notes: DNS-only confirmation works if HTTP is egress-filtered
+    severity_context: CVSS 7.5 – blind SSRF confirmation via OOB DNS/HTTP callback
+    cve_refs: []
+    tags:
+    - ssrf
+    - blind
+    - oob
+    - burp-collaborator
+    - dns-confirmation
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+- slug: ssrf-bypass
+  name: SSRF Filter Bypass
+  description: Techniques to bypass IP allowlists, URL validation, and SSRF filters protecting internal resources.
+  difficulty: high
+  prerequisites:
+  - SSRF exists but IP or hostname validation blocks obvious payloads
+  payloads:
+  - id: ssrf-bypass-001
+    title: Decimal IP notation bypass
+    payload_string: http://2130706433/
+    how_it_works: 'IPv4 addresses can be expressed in decimal (single 32-bit integer) notation in addition to dotted-quad.
+      The decimal value 2130706433 equals 127.0.0.1 when converted from decimal to four octets. Filters that check for the
+      string ''127.0.0.1'' or ''localhost'' but do not normalize IP representations will miss this encoding. All browsers
+      and HTTP clients understand decimal IP notation and make the connection to localhost. This is a simple and reliable
+      SSRF filter bypass.
+
+      '
+    prerequisites:
+    - SSRF filter blocks 127.0.0.1 and localhost strings but not decimal notation
+    waf_bypass_notes: 2130706433 = 127.0.0.1; 2852039166 = 169.254.169.254 (AWS metadata)
+    severity_context: CVSS 7.5 – SSRF filter bypass via decimal IP notation
+    cve_refs:
+    - CVE-2021-22986
+    tags:
+    - ssrf
+    - filter-bypass
+    - decimal-ip
+    - encoding
+    - localhost
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: ssrf-bypass-002
+    title: DNS rebinding SSRF
+    payload_string: http://r.attacker.com/
+    how_it_works: 'DNS rebinding exploits the TTL-based nature of DNS resolution. The attacker controls a domain (r.attacker.com)
+      whose DNS response first returns a legitimate external IP, passing any SSRF hostname validation. A second DNS lookup
+      for the same domain (after TTL expiry, typically 0 seconds) returns 127.0.0.1. The application validates the first resolution,
+      but the actual HTTP connection uses the second resolution. This bypasses allowlist-based SSRF validation that checks
+      the resolved IP before making the request.
+
+      '
+    prerequisites:
+    - SSRF filter validates DNS resolution result
+    - DNS is re-resolved at connection time rather than validated once
+    waf_bypass_notes: Requires attacker-controlled DNS; use singularity-of-origin tool
+    severity_context: CVSS 8.5 – SSRF filter bypass via DNS rebinding for localhost access
+    cve_refs:
+    - CVE-2021-40438
+    tags:
+    - ssrf
+    - dns-rebinding
+    - filter-bypass
+    - advanced
+    - timing
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: ssrf-bypass-003
+    title: IPv6 localhost bypass
+    payload_string: http://[::1]/
+    how_it_works: 'The IPv6 loopback address ::1 is equivalent to 127.0.0.1 for localhost. Filters that block ''127.0.0.1''
+      and ''localhost'' but do not account for IPv6 notation will be bypassed. Applications and HTTP libraries that support
+      IPv6 will successfully connect to the local server. The [::1] bracket notation is RFC-compliant for IPv6 addresses in
+      URLs. Additionally, IPv6 addresses have many representations: ::1, 0:0:0:0:0:0:0:1, and ::ffff:127.0.0.1 are all equivalent.
+
+      '
+    prerequisites:
+    - Server and HTTP library support IPv6
+    - Filter blocks IPv4 localhost but not IPv6
+    waf_bypass_notes: Also try [0:0:0:0:0:0:0:1] or [::ffff:127.0.0.1]
+    severity_context: CVSS 7.5 – IPv6 localhost SSRF filter bypass
+    cve_refs: []
+    tags:
+    - ssrf
+    - ipv6
+    - filter-bypass
+    - localhost
+    - encoding
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: ssrf-bypass-004
+    title: Open redirect SSRF chain
+    payload_string: https://trusted.com/redirect?url=http://192.168.1.1/
+    how_it_works: 'When an SSRF filter allowlists specific domains (e.g., only trusted.com is allowed), an open redirect on
+      a trusted domain can be chained. The SSRF request goes to trusted.com/redirect which passes the allowlist check, then
+      the application follows the redirect to the internal IP. The final request reaches the internal service. This chain
+      only works if the application follows HTTP redirects. Many SSRF filters validate only the initial URL, not redirect
+      destinations.
+
+      '
+    prerequisites:
+    - SSRF filter allows requests to trusted domains
+    - Trusted domain has open redirect vulnerability
+    - Application follows HTTP redirects
+    waf_bypass_notes: Identify open redirects on allowlisted domains; check 301/302 following
+    severity_context: CVSS 8.5 – SSRF via trusted domain open redirect chain
+    cve_refs: []
+    tags:
+    - ssrf
+    - open-redirect-chain
+    - allowlist-bypass
+    - redirect-following
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: ssrf-bypass-005
+    title: URL scheme abuse SSRF (file://)
+    payload_string: file:///etc/passwd
+    how_it_works: 'The file:// URI scheme instructs the HTTP client to read from the local filesystem rather than making a
+      network connection. If the application uses a library (like curl with follow-redirects or Python requests) that supports
+      file:// URIs, this provides arbitrary local file read via SSRF. Unlike HTTP-based SSRF, file:// bypasses all network-level
+      controls. It converts SSRF to LFI, allowing reading of configuration files, SSH keys, and other sensitive server files
+      without network egress.
+
+      '
+    prerequisites:
+    - Application uses URL-fetching library that supports file:// scheme
+    - file:// scheme not blocked in URL validation
+    waf_bypass_notes: Also try dict://, gopher://, ftp:// for protocol confusion attacks
+    severity_context: CVSS 8.6 – SSRF with file:// scheme for arbitrary local file read
+    cve_refs: []
+    tags:
+    - ssrf
+    - file-scheme
+    - lfi-chain
+    - protocol-abuse
+    - filter-bypass
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+- slug: ssrf-advanced
+  name: Advanced SSRF
+  description: Protocol-based SSRF attacks including Gopher for SMTP/Redis smuggling and cloud-specific credential attacks.
+  difficulty: expert
+  prerequisites:
+  - SSRF confirmed and filter bypasses applied
+  - Target internal service identified
+  payloads:
+  - id: ssrf-adv-001
+    title: Gopher protocol Redis attack
+    payload_string: gopher://127.0.0.1:6379/_%2A1%0D%0A%248%0D%0Aflushall%0D%0A
+    how_it_works: 'The gopher:// protocol allows sending arbitrary bytes to a TCP port, enabling protocol smuggling. By encoding
+      Redis protocol commands (RESP format) in the gopher URL, an attacker causes the SSRF-vulnerable application to send
+      those commands to the Redis server on port 6379. The payload above flushes all Redis keys (data loss). More targeted
+      payloads write a crontab entry or SSH key using Redis''s CONFIG SET dir and SAVE commands, achieving RCE. This requires
+      Redis to be running without authentication on localhost.
+
+      '
+    prerequisites:
+    - Redis running without authentication on localhost port 6379
+    - Application supports gopher:// URI scheme
+    waf_bypass_notes: Gopher is rarely enabled in modern curl; check libcurl --with-gopher
+    severity_context: CVSS 9.8 – SSRF + gopher to Redis RCE via crontab or SSH key write
+    cve_refs: []
+    tags:
+    - ssrf
+    - gopher
+    - redis
+    - protocol-smuggling
+    - rce
+    - advanced
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: ssrf-adv-002
+    title: Azure IMDS credential theft
+    payload_string: http://169.254.169.254/metadata/instance?api-version=2021-02-01
+    how_it_works: 'Azure''s Instance Metadata Service (IMDS) at 169.254.169.254 provides managed identity tokens and instance
+      information. The Metadata: true header is required. These tokens authenticate to Azure Resource Manager API, allowing
+      access to Azure storage accounts, Key Vault secrets, SQL databases, and other resources the VM''s managed identity is
+      authorized to access. The capital-M ''Metadata'' header requirement provides minimal protection that can be bypassed
+      when the attacker controls request headers via SSRF.
+
+      '
+    prerequisites:
+    - Application running on Azure VM or App Service
+    - SSRF can reach 169.254.169.254
+    - Metadata header injectable
+    waf_bypass_notes: 'Azure requires Metadata: true header; inject it via SSRF header control'
+    severity_context: CVSS 9.8 – Azure managed identity token theft via SSRF
+    cve_refs:
+    - CVE-2021-26855
+    tags:
+    - ssrf
+    - azure
+    - imds
+    - managed-identity
+    - cloud
+    - credential-theft
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: ssrf-adv-003
+    title: Internal Kubernetes API server
+    payload_string: https://kubernetes.default.svc/api/v1/namespaces/kube-system/secrets
+    how_it_works: 'In Kubernetes clusters, the API server is accessible at kubernetes.default.svc from within the cluster.
+      If a pod running a vulnerable application has a service account token (mounted at /var/run/secrets/kubernetes.io/serviceaccount/token
+      by default), SSRF can be used to access the Kubernetes API with that token. Reading secrets in kube-system namespace
+      reveals admin credentials, other service account tokens, and TLS certificates. This allows lateral movement across the
+      entire Kubernetes cluster.
+
+      '
+    prerequisites:
+    - Application running in Kubernetes pod
+    - Service account token mounted in pod
+    - Service account has permissions to read secrets
+    waf_bypass_notes: Use service account token from /var/run/secrets/kubernetes.io/serviceaccount/
+    severity_context: CVSS 9.8 – Kubernetes cluster takeover via SSRF to internal API server
+    cve_refs: []
+    tags:
+    - ssrf
+    - kubernetes
+    - k8s-api
+    - service-account
+    - cluster-takeover
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: ssrf-adv-004
+    title: SSRF to internal Elasticsearch
+    payload_string: http://127.0.0.1:9200/_cat/indices
+    how_it_works: 'Elasticsearch runs on port 9200 by default and in many deployments does not require authentication when
+      accessed locally. The _cat/indices endpoint lists all index names in the cluster, revealing what data is stored. Subsequent
+      requests to /_search can retrieve actual documents. Common sensitive data found in Elasticsearch includes user PII,
+      financial records, application logs containing credentials, and health records. Elasticsearch is a frequent SSRF target
+      due to its default open configuration.
+
+      '
+    prerequisites:
+    - Elasticsearch running on localhost:9200 without authentication
+    - SSRF can reach internal port 9200
+    waf_bypass_notes: Elasticsearch port 9200; also check Kibana on 5601
+    severity_context: CVSS 8.5 – data exfiltration from internal Elasticsearch via SSRF
+    cve_refs:
+    - CVE-2020-5902
+    tags:
+    - ssrf
+    - elasticsearch
+    - internal-service
+    - data-exfil
+    - nosql
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: ssrf-adv-005
+    title: SSRF HTTP smuggling via CRLF
+    payload_string: http://internal-api.local/%0d%0aHost:%20evil.com
+    how_it_works: 'CRLF injection in SSRF URLs can manipulate the HTTP request that the server makes. By injecting newlines
+      into the URL path, the attacker appends additional HTTP headers to the forwarded request. This can override the Host
+      header (enabling virtual host attacks on internal servers), inject custom headers that internal APIs trust (like X-Internal-Auth
+      or X-Forwarded-For: 127.0.0.1), or manipulate the HTTP method. CRLF in SSRF is a protocol-level attack layer on top
+      of the SSRF vulnerability.
+
+      '
+    prerequisites:
+    - SSRF forwards URL path including CRLF characters
+    - Internal HTTP server processes the injected headers
+    waf_bypass_notes: CRLF in URL path is an advanced technique; filter %0d%0a in URLs
+    severity_context: CVSS 8.5 – header injection via SSRF + CRLF for internal API abuse
+    cve_refs: []
+    tags:
+    - ssrf
+    - crlf-injection
+    - header-injection
+    - protocol-smuggling
+    - advanced
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'

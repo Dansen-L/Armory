@@ -1,0 +1,392 @@
+slug: open-redirect
+name: Open Redirect
+owasp: A01:2021 – Broken Access Control
+description: 'Open redirect vulnerabilities occur when an application accepts a user-controlled URL parameter and redirects
+  the browser to that URL without proper validation. Attackers exploit this to lend legitimacy to phishing pages by using
+  a trusted domain as a redirect pivot, bypass origin checks, or chain with OAuth flows to steal tokens.
+
+  '
+severity_range:
+  low: CVSS 4.3 – phishing redirect from trusted domain
+  high: CVSS 7.5 – OAuth token theft, SSRF escalation
+references:
+- label: OWASP Unvalidated Redirects Cheat Sheet
+  url: https://cheatsheetseries.owasp.org/cheatsheets/Unvalidated_Redirects_and_Forwards_Cheat_Sheet.html
+- label: PortSwigger Open Redirection
+  url: https://portswigger.net/kb/issues/00500100_open-redirection-reflected
+groups:
+- slug: url-parameter-redirect
+  name: URL Parameter-Based Redirect
+  description: Exploiting redirect URL parameters (next=, url=, return=, redirect=, goto=, redir=)
+  difficulty: low
+  prerequisites:
+  - Application accepts a URL parameter that controls redirect destination
+  payloads:
+  - id: redir-url-001
+    title: Basic external redirect via next parameter
+    payload_string: https://victim.com/login?next=https://evil.com
+    how_it_works: 'The application uses the ''next'' parameter to redirect after login without validating whether the destination
+      is on the same domain. An attacker crafts a link pointing to the legitimate site''s login page with next=https://evil.com.
+      When the user logs in, they are transparently redirected to the attacker''s phishing page. Because the initial URL shows
+      the legitimate domain, users are far more likely to trust the link. This is the most basic open redirect pattern.
+
+      '
+    prerequisites:
+    - Login or other flow that uses a redirect parameter
+    - No domain validation on the redirect target
+    waf_bypass_notes: Often not blocked; redirect parameters are common legitimate functionality
+    severity_context: CVSS 4.3 – phishing vector; escalates to CVSS 7.5 when chained with OAuth
+    cve_refs:
+    - CVE-2018-1000130
+    tags:
+    - redirect
+    - phishing
+    - next-param
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: redir-url-002
+    title: Double URL encoding bypass
+    payload_string: https://victim.com/redirect?url=https%253A%252F%252Fevil.com
+    how_it_works: 'When the application validates the URL after a single round of URL decoding, an attacker can double-encode
+      the scheme separator (: becomes %3A which becomes %253A). The WAF or validator sees an apparently-safe string, but the
+      browser or subsequent server-side decode produces the full evil.com URL. This technique bypasses filter implementations
+      that only decode once before checking the destination host.
+
+      '
+    prerequisites:
+    - Server double-decodes URL parameters before following the redirect
+    waf_bypass_notes: Bypasses single-decode validators; %25 encodes the percent sign itself
+    severity_context: CVSS 4.3 – bypass of naive URL validation
+    cve_refs:
+    - CVE-2018-1000130
+    tags:
+    - redirect
+    - bypass-encoding
+    - double-encoding
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: redir-url-003
+    title: Protocol-relative URL redirect
+    payload_string: https://victim.com/redirect?url=//evil.com/phish
+    how_it_works: 'Protocol-relative URLs (beginning with //) inherit the current page''s scheme (HTTP or HTTPS). Some validators
+      check only that the URL does not start with http:// or https://, failing to recognize that //evil.com is an absolute
+      URL to a different host. When the redirect is processed, the browser resolves //evil.com using the current protocol,
+      navigating to the attacker''s site.
+
+      '
+    prerequisites:
+    - Redirect target validation only blocks explicit scheme prefixes
+    waf_bypass_notes: Blocks http:// checks; // prefix appears as a path to naive validators
+    severity_context: CVSS 4.3 – phishing redirect bypassing scheme-based validation
+    cve_refs: []
+    tags:
+    - redirect
+    - protocol-relative
+    - bypass-validation
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: redir-url-004
+    title: Domain confusion with @ character
+    payload_string: https://victim.com/redirect?url=https://victim.com@evil.com/
+    how_it_works: 'In URL syntax, the @ character separates user info from the host. The browser interprets https://victim.com@evil.com/
+      as connecting to evil.com with username victim.com. Validators that check whether the URL starts with or contains the
+      legitimate domain as a hostname will be fooled into thinking the destination is victim.com, while the actual request
+      goes to evil.com.
+
+      '
+    prerequisites:
+    - Validator checks URL contains legitimate domain but not full hostname validation
+    waf_bypass_notes: 'URL-encode @ as %40 for additional bypass: https://victim.com%40evil.com/'
+    severity_context: CVSS 5.4 – domain confusion; user credentials in URL prefix appear legitimate
+    cve_refs: []
+    tags:
+    - redirect
+    - domain-confusion
+    - at-sign
+    - bypass-validation
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: redir-url-005
+    title: Subdomain bypass with legitimate domain in path
+    payload_string: https://victim.com/redirect?url=https://evil.com/victim.com
+    how_it_works: 'Validators that check whether the target URL ''contains'' the legitimate domain without anchoring the check
+      to the hostname portion will accept URLs where the legitimate domain appears in the path. https://evil.com/victim.com
+      passes a contains-check for victim.com but navigates to evil.com. This is a common implementation mistake when building
+      URL allow-lists.
+
+      '
+    prerequisites:
+    - Validator uses simple string contains() check rather than parsed hostname comparison
+    waf_bypass_notes: Standard URL; no encoding needed
+    severity_context: CVSS 4.3 – bypass of substring-based URL validation
+    cve_refs: []
+    tags:
+    - redirect
+    - bypass-validation
+    - contains-check
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: redir-url-006
+    title: JavaScript pseudo-protocol redirect
+    payload_string: https://victim.com/redirect?url=javascript:alert(document.domain)
+    how_it_works: 'When the application redirects by setting window.location or an href attribute without checking the URL
+      scheme, a javascript: pseudo-protocol URL executes code in the context of the victim domain. The redirect becomes an
+      XSS vector, escalating impact beyond mere phishing to script execution. This only works when client-side redirect logic
+      is used (e.g., JavaScript sets window.location).
+
+      '
+    prerequisites:
+    - Client-side redirect (window.location = param)
+    - No scheme validation
+    waf_bypass_notes: 'Use javascript%3A or JAVA&#83;CRIPT: to bypass simple scheme filters'
+    severity_context: CVSS 6.1 – XSS via open redirect escalation; account takeover possible
+    cve_refs:
+    - CVE-2018-1000130
+    tags:
+    - redirect
+    - xss
+    - javascript-protocol
+    - escalation
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+- slug: header-based-redirect
+  name: Header-Based Redirect Injection
+  description: Abusing HTTP response headers (Location, Refresh) and Host header to control redirect destinations
+  difficulty: medium
+  prerequisites:
+  - Application uses Host header or other HTTP headers to construct redirect URLs
+  payloads:
+  - id: redir-hdr-001
+    title: Host header redirect injection
+    payload_string: "GET /login HTTP/1.1\r\nHost: evil.com\r\n"
+    how_it_works: 'Applications that construct absolute URLs for redirects using the HTTP Host header (e.g., redirect_to =
+      ''https://'' + request.host + ''/dashboard'') can be abused by supplying a crafted Host header. The server generates
+      a Location: https://evil.com/dashboard response, redirecting the user''s browser to the attacker''s site. This often
+      affects password reset flows where a reset link is constructed using the incoming Host header.
+
+      '
+    prerequisites:
+    - Application builds redirect URL from HTTP Host header
+    - No Host header validation
+    waf_bypass_notes: Often not blocked; Host header manipulation is invisible to application-layer WAFs without virtual hosting
+    severity_context: CVSS 7.5 – account takeover via password reset link hijacking
+    cve_refs:
+    - CVE-2017-9506
+    tags:
+    - redirect
+    - host-header
+    - account-takeover
+    - password-reset
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: redir-hdr-002
+    title: Refresh header redirect injection
+    payload_string: GET /page?ref=https://evil.com HTTP/1.1
+    how_it_works: 'Some applications set a Refresh header or meta-refresh tag to redirect after displaying a message. If the
+      refresh URL is constructed from user input without validation, an attacker can make the page redirect to an external
+      site after displaying a legitimate-looking message. The Refresh: 0; url= header operates identically to Location: but
+      with a delay, and shares the same injection risks.
+
+      '
+    prerequisites:
+    - Application uses Refresh header with user-controlled URL
+    waf_bypass_notes: Refresh header less commonly inspected than Location header
+    severity_context: CVSS 4.3 – phishing via delayed redirect
+    cve_refs: []
+    tags:
+    - redirect
+    - refresh-header
+    - phishing
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: redir-hdr-003
+    title: X-Forwarded-Host redirect manipulation
+    payload_string: "GET /forgot-password HTTP/1.1\r\nHost: victim.com\r\nX-Forwarded-Host: evil.com\r\n"
+    how_it_works: 'Applications behind reverse proxies may trust X-Forwarded-Host to determine the publicly visible hostname.
+      If the application builds password reset links or other redirects using the X-Forwarded-Host value, an attacker who
+      can control this header (e.g., direct access to the origin server bypassing the proxy) can cause sensitive URLs like
+      password reset tokens to be generated pointing to the attacker''s domain. The victim receives an email with a reset
+      link containing evil.com.
+
+      '
+    prerequisites:
+    - Application trusts X-Forwarded-Host without proxy-level filtering
+    - Application builds reset/redirect URLs from forwarded host
+    waf_bypass_notes: Many WAFs do not inspect or strip X-Forwarded-Host
+    severity_context: CVSS 8.2 – account takeover via password reset token redirect
+    cve_refs: []
+    tags:
+    - redirect
+    - x-forwarded-host
+    - account-takeover
+    - password-reset
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: redir-hdr-004
+    title: OAuth redirect_uri open redirect for token theft
+    payload_string: https://victim.com/oauth/authorize?client_id=app&redirect_uri=https%3A%2F%2Fevil.com&response_type=code
+    how_it_works: 'OAuth 2.0 authorization flows use a redirect_uri parameter to deliver the authorization code after user
+      consent. If the authorization server does not strictly validate redirect_uri against a registered whitelist (or allows
+      prefix matching), an attacker can set redirect_uri to their own domain. After the user authorizes, the auth code is
+      sent to the attacker''s URI. Combined with PKCE bypass, this leads to full account takeover. This is one of the highest-impact
+      open redirect variants.
+
+      '
+    prerequisites:
+    - OAuth server performs prefix or contains validation instead of exact match
+    - Attacker can register a client ID or exploit existing one
+    waf_bypass_notes: URL encoding and path traversal (/../) can bypass prefix checks
+    severity_context: CVSS 9.3 – OAuth authorization code theft → account takeover
+    cve_refs:
+    - CVE-2019-11229
+    tags:
+    - redirect
+    - oauth
+    - token-theft
+    - account-takeover
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: redir-hdr-005
+    title: SAML RelayState open redirect
+    payload_string: "POST /saml/acs HTTP/1.1\r\n\r\nRelayState=https://evil.com&SAMLResponse=..."
+    how_it_works: 'SAML Single Sign-On flows often use a RelayState parameter to return users to the page they were accessing
+      before being redirected for authentication. If the service provider does not validate that RelayState points to an allowed
+      destination after successful authentication, attackers can pre-set RelayState to an external URL and redirect authenticated
+      users to phishing pages. The attack is particularly effective because users are redirected immediately after successful
+      login.
+
+      '
+    prerequisites:
+    - SAML SP does not validate RelayState as an internal URL
+    - Attacker can initiate an SP-initiated SAML flow
+    waf_bypass_notes: RelayState is rarely inspected by WAFs in SAML POST bindings
+    severity_context: CVSS 6.1 – post-authentication redirect to phishing page
+    cve_refs: []
+    tags:
+    - redirect
+    - saml
+    - relay-state
+    - phishing
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+- slug: javascript-redirect
+  name: Client-Side JavaScript Redirect
+  description: Exploiting JavaScript-based redirects that read from URL parameters, hash fragments, or postMessage
+  difficulty: medium
+  prerequisites:
+  - Application uses JavaScript to redirect based on DOM/URL data
+  payloads:
+  - id: redir-js-001
+    title: document.location assignment via hash
+    payload_string: https://victim.com/app#//evil.com/phish
+    how_it_works: 'Applications using code like document.location = location.hash.slice(1) to implement client-side routing
+      can be abused by supplying a hash value starting with // or https://. Since hash fragments are not sent to the server,
+      server-side validation cannot intercept this redirect. The browser evaluates the JavaScript assignment and navigates
+      to the attacker-controlled URL. This is common in single-page applications using hash-based routing.
+
+      '
+    prerequisites:
+    - Client-side code sets document.location based on hash without protocol validation
+    waf_bypass_notes: Hash fragment not sent to server; server-side WAF has no visibility
+    severity_context: CVSS 4.3 – client-side redirect; only bypass-able by strict scheme checking in JS
+    cve_refs:
+    - CVE-2018-1000130
+    tags:
+    - redirect
+    - javascript
+    - hash-fragment
+    - client-side
+    - dom
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: redir-js-002
+    title: postMessage-based redirect injection
+    payload_string: window.opener.postMessage('https://evil.com', '*')
+    how_it_works: 'Applications that listen to window.postMessage() for navigation commands without validating the origin
+      can be redirected by any page that obtains a reference to the window. If a pop-up or iframe opens the target application
+      and listens for postMessage events to perform navigation, an attacker can send a message with a malicious URL. The target
+      application''s handler calls window.location.href = data without checking origin, causing navigation to the attacker''s
+      domain.
+
+      '
+    prerequisites:
+    - Target uses postMessage listener for navigation without origin validation
+    - Attacker can open or reference the target window
+    waf_bypass_notes: Cross-window messaging bypasses all server-side and most client-side protections
+    severity_context: CVSS 5.4 – redirect via cross-window messaging exploitation
+    cve_refs: []
+    tags:
+    - redirect
+    - postmessage
+    - javascript
+    - cross-window
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: redir-js-003
+    title: window.name redirect via cross-domain navigation
+    payload_string: window.name = 'https://evil.com'; window.location = 'https://victim.com/app';
+    how_it_works: 'The window.name property persists across cross-domain navigation within the same browser tab. An attacker
+      can set window.name to a malicious URL before navigating to the victim application. If the victim application reads
+      window.name to determine where to redirect users (a rare but existing pattern), the attacker''s URL is used. This is
+      a lower-frequency vector but requires no server interaction and bypasses all HTTP-level protections.
+
+      '
+    prerequisites:
+    - Target application reads window.name for redirect URL
+    - Attacker controls a page that the user visits before the target
+    waf_bypass_notes: window.name persists cross-domain; no network traffic generated
+    severity_context: CVSS 4.3 – redirect via window.name persistence
+    cve_refs: []
+    tags:
+    - redirect
+    - window-name
+    - javascript
+    - cross-domain
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: redir-js-004
+    title: Referer header redirect harvesting
+    payload_string: '# Embed link to victim app from evil.com; victim app reads Referer for redirect'
+    how_it_works: 'Some applications use the HTTP Referer header to determine where to redirect users after completing an
+      action (e.g., back to the page that linked to the form). By embedding a link from an attacker-controlled page to the
+      victim application''s action endpoint, the Referer header will point to the attacker''s domain. If the application redirects
+      to the Referer value without validation, the user is sent to the attacker''s site after submitting the form or clicking
+      the link.
+
+      '
+    prerequisites:
+    - Application uses Referer header as redirect destination
+    - Attacker can embed links from their own domain
+    waf_bypass_notes: Referer headers from legitimate-looking domains can bypass hostname checks
+    severity_context: CVSS 4.3 – phishing via Referer-based redirect
+    cve_refs: []
+    tags:
+    - redirect
+    - referer
+    - javascript
+    - header
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: redir-js-005
+    title: SPA router injection via query parameter
+    payload_string: https://victim.com/app?route=https://evil.com
+    how_it_works: 'Single-page applications often implement routing via query parameters read by client-side JavaScript. If
+      the router directly assigns the route parameter to window.location without validating it as an internal path, an attacker
+      can inject an absolute URL. The user sees victim.com in the address bar initially, then is transparently redirected
+      to evil.com when the SPA JavaScript initializes.
+
+      '
+    prerequisites:
+    - SPA reads route/redirect from query parameters via JavaScript
+    - No absolute URL filtering in client-side router
+    waf_bypass_notes: SPA routing occurs entirely client-side; server-side WAF may not see the redirect
+    severity_context: CVSS 4.3 – SPA-level redirect injection
+    cve_refs: []
+    tags:
+    - redirect
+    - spa
+    - javascript
+    - router
+    - client-side
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'

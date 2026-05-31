@@ -1,0 +1,442 @@
+slug: business-logic
+name: Business Logic Flaws
+owasp: A04:2021 – Insecure Design
+description: 'Business logic vulnerabilities arise from flaws in the design and implementation of application workflows rather
+  than input validation. They include price manipulation, coupon abuse, race conditions, enumeration via timing/response differences,
+  and workflow bypass. These flaws are application-specific and not detectable by generic scanners.
+
+  '
+severity_range:
+  low: CVSS 4.3 – minor data disclosure, minor workflow bypass
+  high: CVSS 9.1 – financial fraud, account takeover, data exfiltration
+references:
+- label: PortSwigger Business Logic Vulnerabilities
+  url: https://portswigger.net/web-security/logic-flaws
+- label: OWASP Business Logic Testing
+  url: https://owasp.org/www-project-web-security-testing-guide/latest/4-Web_Application_Security_Testing/10-Business_Logic_Testing/
+groups:
+- slug: price-manipulation
+  name: Price and Payment Manipulation
+  description: Manipulating purchase flows, prices, and quantities to achieve financial fraud
+  difficulty: medium
+  prerequisites:
+  - E-commerce or billing application with user-controlled price parameters
+  payloads:
+  - id: bizlogic-price-001
+    title: Negative quantity for credit abuse
+    payload_string: '{"item_id": 123, "quantity": -1, "price": 9.99}'
+    how_it_works: 'Applications that calculate totals by multiplying price by quantity without validating that quantity is
+      positive will produce negative totals when negative quantities are supplied. Submitting quantity:-1 for a $9.99 item
+      generates a total of -$9.99, which may be applied as a credit to the account. Some applications process this as a refund,
+      effectively paying the attacker for making a purchase. This is a common arithmetic logic flaw in shopping cart implementations.
+
+      '
+    prerequisites:
+    - Server-side calculation uses quantity without positive validation
+    - Negative totals applied as credit or processed as refund
+    waf_bypass_notes: Standard JSON POST body; no encoding needed
+    severity_context: CVSS 8.6 – financial fraud via negative quantity credit generation
+    tags:
+    - business-logic
+    - price-manipulation
+    - negative-quantity
+    - financial-fraud
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: bizlogic-price-002
+    title: Price parameter tampering in checkout
+    payload_string: '{"item_id": 123, "price": 0.01, "quantity": 1}'
+    how_it_works: 'Checkout flows that include price as a client-supplied parameter (in form data, JSON body, or URL parameter)
+      rather than looking it up server-side from the product catalog trust the client. An attacker intercepts the checkout
+      request and replaces the price with 0.01 or 0.00. If the server uses this client-supplied price for payment processing
+      rather than the server-side catalog price, they purchase items at arbitrarily low prices.
+
+      '
+    prerequisites:
+    - Price submitted as client-side parameter in checkout request
+    - Server uses client-supplied price for payment calculation
+    waf_bypass_notes: Parameter modification; intercept and replay request
+    severity_context: CVSS 9.1 – purchasing products at attacker-defined prices
+    cve_refs: []
+    tags:
+    - business-logic
+    - price-manipulation
+    - parameter-tampering
+    - financial-fraud
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: bizlogic-price-003
+    title: Coupon code stacking and reuse
+    payload_string: '{"coupon": "SAVE50", "coupon2": "SAVE50", "coupon3": "EXTRADISCOUNT"}'
+    how_it_works: 'Applications that enforce coupon limits at the UI level but not server-side may allow multiple coupon applications.
+      By directly submitting multiple coupon fields in the API request, or by applying the same coupon multiple times in sequence,
+      an attacker stacks discounts beyond allowed limits. Single-use coupons may also be reused if the usage tracking has
+      a race condition or is only enforced per-session rather than globally.
+
+      '
+    prerequisites:
+    - Coupon validation only enforced client-side or has race condition
+    - API accepts multiple coupon parameters
+    waf_bypass_notes: Standard JSON POST; no encoding needed
+    severity_context: CVSS 7.5 – unauthorized discount stacking; financial loss
+    cve_refs: []
+    tags:
+    - business-logic
+    - coupon
+    - discount-abuse
+    - stacking
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: bizlogic-price-004
+    title: Race condition on limited inventory purchase
+    payload_string: "# Send 10 parallel requests simultaneously:\nfor i in $(seq 1 10); do\n  curl -s -X POST https://victim.com/api/purchase\
+      \ \\\n    -d '{\"item_id\":1,\"qty\":1}' &\ndone\nwait\n"
+    how_it_works: 'Applications that check inventory before deducting it without proper database locking (e.g., SELECT then
+      UPDATE without transaction isolation) are vulnerable to race conditions. If 10 parallel purchase requests all pass the
+      inventory check simultaneously (all see qty=1 available), all 10 will proceed to payment and deduct inventory. The result
+      is negative inventory and free product delivery. This is a classic TOCTOU (Time of Check Time of Use) vulnerability.
+
+      '
+    prerequisites:
+    - Database operations not properly locked during inventory check/deduct
+    - Application susceptible to TOCTOU conditions
+    waf_bypass_notes: Parallel HTTP requests; timing-dependent
+    severity_context: CVSS 8.1 – free items via race condition on limited inventory
+    cve_refs:
+    - CVE-2022-0739
+    tags:
+    - business-logic
+    - race-condition
+    - toctou
+    - inventory
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: bizlogic-price-005
+    title: Free shipping threshold manipulation
+    payload_string: '# Add expensive item → get free shipping → remove expensive item
+
+      POST /cart/add {"item_id": 999, "price": 100}
+
+      GET /shipping/calculate  # now qualifies for free shipping
+
+      POST /checkout/start     # free shipping applied
+
+      DELETE /cart/item/999    # remove expensive item
+
+      POST /checkout/complete  # complete with free shipping still applied
+
+      '
+    how_it_works: 'E-commerce checkout flows that apply free shipping at one step but don''t re-validate the cart total at
+      payment completion allow this manipulation. An attacker adds an expensive item to reach the free shipping threshold,
+      records that free shipping was applied, then removes the item before completing checkout. If the shipping cost is stored
+      in the session or cart object without revalidation, the final order ships for free.
+
+      '
+    prerequisites:
+    - Shipping cost calculated at step N but not revalidated at completion
+    - Multi-step checkout without cart total revalidation
+    waf_bypass_notes: Multi-step workflow; each individual request is legitimate
+    severity_context: CVSS 5.3 – free shipping manipulation; financial loss for merchant
+    cve_refs: []
+    tags:
+    - business-logic
+    - shipping
+    - multi-step
+    - threshold-bypass
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+- slug: account-enumeration
+  name: Account Enumeration and Timing Attacks
+  description: Inferring valid accounts via response differences, timing, error messages, or behavior
+  difficulty: low
+  prerequisites:
+  - Application returns different responses for valid vs invalid accounts
+  payloads:
+  - id: bizlogic-enum-001
+    title: Username enumeration via login error message
+    payload_string: '# For existing user:  "Password incorrect"
+
+      # For non-existing:   "No account found with this email"
+
+      POST /login {"email": "test@test.com", "password": "wrong"}
+
+      '
+    how_it_works: 'Applications that return different error messages for "username not found" versus "wrong password" allow
+      attackers to enumerate valid user accounts. By automating login attempts with a username wordlist and observing which
+      error message is returned, an attacker builds a list of valid account emails for subsequent targeted attacks (credential
+      stuffing, phishing, password reset abuse). This is one of the most common business logic information disclosure vulnerabilities.
+
+      '
+    prerequisites:
+    - Login endpoint returns different messages for invalid username vs invalid password
+    waf_bypass_notes: Standard login POST; rate limiting is the primary defense
+    severity_context: CVSS 5.3 – valid account enumeration enabling targeted attacks
+    cve_refs: []
+    tags:
+    - business-logic
+    - enumeration
+    - username
+    - error-message
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: bizlogic-enum-002
+    title: Timing-based account enumeration
+    payload_string: "# Measure response time difference:\n# Existing user: 250ms (password hash comparison performed)\n# Non-existing:\
+      \  10ms (returns immediately, no hash check)\nimport time, requests\nfor email in wordlist:\n    t = time.time()\n \
+      \   requests.post('/login', json={'email':email,'password':'x'})\n    print(email, time.time()-t)\n"
+    how_it_works: 'Applications that only perform password hash computation for existing accounts expose a timing side-channel.
+      For a valid username, the server performs bcrypt or similar expensive hash comparison (250ms+); for an invalid username,
+      it returns immediately. By measuring response times over many requests, an attacker can distinguish valid from invalid
+      accounts even when error messages are identical. This requires statistical analysis to overcome network jitter.
+
+      '
+    prerequisites:
+    - Server skips hash computation for non-existent accounts
+    - Measurable timing difference (typically >50ms)
+    waf_bypass_notes: Timing attacks require many requests; use statistical averaging
+    severity_context: CVSS 4.3 – timing-based account enumeration bypassing identical error messages
+    cve_refs: []
+    tags:
+    - business-logic
+    - timing-attack
+    - enumeration
+    - side-channel
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: bizlogic-enum-003
+    title: Password reset enumeration via response body
+    payload_string: 'POST /forgot-password {"email": "user@test.com"}
+
+      # Valid: {"message": "Reset email sent to user@test.com"}
+
+      # Invalid: {"message": "If this email exists, a reset link was sent"}
+
+      '
+    how_it_works: 'Password reset flows frequently leak user enumeration despite best practices. Even when the server tries
+      to use a generic message, differences in response body, HTTP status code, response length, or redirect destination reveal
+      whether the email exists. Some applications include the email in the success message for "usability" but inadvertently
+      confirm account existence to attackers.
+
+      '
+    prerequisites:
+    - Password reset response differs based on account existence
+    waf_bypass_notes: Standard POST request; enumeration via response analysis
+    severity_context: CVSS 5.3 – account enumeration via password reset flow
+    cve_refs: []
+    tags:
+    - business-logic
+    - enumeration
+    - password-reset
+    - information-disclosure
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: bizlogic-enum-004
+    title: User ID iteration for profile disclosure
+    payload_string: 'GET /api/users/1    # admin account - exposed
+
+      GET /api/users/2    # other user data - exposed
+
+      GET /api/users/100  # target user data
+
+      '
+    how_it_works: 'APIs that expose user profiles via sequential integer IDs without access control allow iterating over all
+      user profiles. Starting from ID 1 (typically the admin account) and incrementing, an attacker can harvest all user emails,
+      names, addresses, and any other profile data. This is a trivial IDOR that requires no special manipulation, just sequential
+      ID enumeration.
+
+      '
+    prerequisites:
+    - User profile endpoint lacks authentication or authorization check
+    - IDs are sequential integers
+    waf_bypass_notes: Sequential GET requests; rate limiting is the primary defense
+    severity_context: CVSS 7.5 – full user database disclosure via sequential ID iteration
+    cve_refs: []
+    tags:
+    - business-logic
+    - enumeration
+    - idor
+    - sequential-id
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: bizlogic-enum-005
+    title: Registration enumeration via duplicate check
+    payload_string: 'POST /register {"email": "victim@target.com"}
+
+      # If email exists: 409 Conflict "Email already registered"
+
+      # If new: 200 OK with user creation
+
+      '
+    how_it_works: 'Registration flows that validate uniqueness before submitting the form (e.g., live availability checks
+      via AJAX) allow account enumeration. An attacker sends registration requests or email availability checks with a target
+      email list. The API returns different responses for existing versus new emails. Unlike login enumeration, this doesn''t
+      require guessing passwords—the registration endpoint itself confirms whether each email is a registered account.
+
+      '
+    prerequisites:
+    - Registration endpoint returns different response for existing email
+    waf_bypass_notes: Can also use 'forgot password' or 'email availability check' endpoints
+    severity_context: CVSS 5.3 – account existence confirmation via registration duplicate check
+    cve_refs: []
+    tags:
+    - business-logic
+    - enumeration
+    - registration
+    - email-check
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+- slug: workflow-bypass
+  name: Workflow and State Bypass
+  description: Skipping required steps, manipulating application state, and exploiting multi-step process flaws
+  difficulty: medium
+  prerequisites:
+  - Multi-step application workflow with server-side state
+  payloads:
+  - id: bizlogic-flow-001
+    title: Payment verification step bypass
+    payload_string: '# Normal flow: POST /checkout/init → POST /payment → POST /checkout/complete
+
+      # Attack: Skip payment step:
+
+      POST /checkout/init {"items": [...]}
+
+      POST /checkout/complete {"order_id": "order_123"}  # skip payment
+
+      '
+    how_it_works: 'Multi-step checkout processes that rely on client-side workflow enforcement allow step skipping when server-side
+      state validation is absent. An attacker starts a checkout, notes the order_id, then directly POSTs to the completion
+      endpoint without going through payment. If the server only validates that an order exists (not that payment was completed),
+      the order is fulfilled without payment. This exploits missing state machine validation in the workflow.
+
+      '
+    prerequisites:
+    - Order completion endpoint doesn't verify payment status
+    - Workflow state not validated server-side
+    waf_bypass_notes: Each request is individually valid; only the sequence is abnormal
+    severity_context: CVSS 9.1 – free product acquisition via payment step skip
+    cve_refs: []
+    tags:
+    - business-logic
+    - workflow-bypass
+    - payment
+    - state-machine
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: bizlogic-flow-002
+    title: Email verification bypass via direct feature access
+    payload_string: '# Register: POST /register → email sent but not clicked
+
+      # Bypass:  GET /api/premium-features (no verification check)
+
+      '
+    how_it_works: 'Applications requiring email verification before accessing certain features often only enforce the check
+      at the UI level (the frontend redirects unverified users). Backend API endpoints may lack the verification check, allowing
+      an attacker to directly call premium or restricted endpoints with an unverified account. This is a common API-level
+      authorization flaw where the frontend and backend don''t consistently enforce the same access control rules.
+
+      '
+    prerequisites:
+    - Email verification enforced at UI but not API level
+    - API endpoints don't check verified status
+    waf_bypass_notes: Direct API calls bypassing frontend routing
+    severity_context: CVSS 6.5 – verification bypass granting access to restricted features
+    cve_refs: []
+    tags:
+    - business-logic
+    - workflow-bypass
+    - verification
+    - api-only
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: bizlogic-flow-003
+    title: Parameter pollution for duplicate processing
+    payload_string: 'POST /transfer HTTP/1.1
+
+      Content-Type: application/x-www-form-urlencoded
+
+
+      amount=100&to_account=attacker&amount=0.01
+
+      '
+    how_it_works: 'HTTP parameter pollution exploits inconsistency in how servers handle duplicate parameters. Some servers
+      use the first occurrence, some use the last, and some combine them. By sending amount=100 twice with amount=0.01, if
+      the server displays the last value (0.01) in the confirmation screen but processes the first (100) in the transaction,
+      the user may confirm a 0.01 transfer while authorizing 100. This can also be used to bypass validation that inspects
+      one parameter value while the operation uses another.
+
+      '
+    prerequisites:
+    - Server processes duplicate parameters differently for display vs execution
+    waf_bypass_notes: HPP depends on server parsing; test with both first and last parameter precedence
+    severity_context: CVSS 8.1 – financial fraud via parameter pollution in payment flows
+    tags:
+    - business-logic
+    - parameter-pollution
+    - hpp
+    - payment
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: bizlogic-flow-004
+    title: Account takeover via predictable token
+    payload_string: '# Observe password reset token pattern:
+
+      Token 1: abc123def456  (at timestamp 1700000000)
+
+      Token 2: abc124def457  (at timestamp 1700000001)
+
+      # Predict token for victim registered at timestamp 1700000005:
+
+      Token guess: abc128def461
+
+      '
+    how_it_works: 'Applications that generate password reset tokens, session IDs, or other security tokens using predictable
+      algorithms (timestamp-based, sequential, or low-entropy PRNG) can be attacked via token prediction. By observing the
+      pattern across multiple generated tokens, an attacker extrapolates the token for a specific user account. This requires
+      knowing approximately when the target''s token was generated (e.g., "I just triggered a reset for victim@target.com").
+
+      '
+    prerequisites:
+    - Token generation uses predictable or low-entropy algorithm
+    - Attacker can generate multiple tokens for observation
+    waf_bypass_notes: Token prediction is offline; actual exploitation is a normal request
+    severity_context: CVSS 8.8 – account takeover via predicted password reset token
+    cve_refs:
+    - CVE-2015-9235
+    tags:
+    - business-logic
+    - predictable-token
+    - account-takeover
+    - password-reset
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: bizlogic-flow-005
+    title: Referral system abuse via self-referral
+    payload_string: '# Create account A (referral code: REF-ABCD)
+
+      # Create account B using REF-ABCD referral
+
+      # Both accounts get $50 credit
+
+      # Repeat with throwaway emails for unlimited credits
+
+      '
+    how_it_works: 'Referral and affiliate programs that grant credits for bringing new users lack proper controls when accounts
+      can be created freely. An attacker creates account A, notes its referral code, creates account B using that code, and
+      both receive credit. If there''s no verification that the accounts are distinct individuals (email domain check, phone
+      verification, payment method validation), this loop generates unlimited credits. The attack scales linearly with the
+      number of disposable email addresses available.
+
+      '
+    prerequisites:
+    - Referral system with no identity verification of referee
+    - Free account creation with disposable emails
+    waf_bypass_notes: Multiple legitimate accounts created separately; behavior appears normal
+    severity_context: CVSS 7.5 – unlimited credit generation via referral abuse
+    cve_refs: []
+    tags:
+    - business-logic
+    - referral-abuse
+    - credit-fraud
+    - self-referral
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'

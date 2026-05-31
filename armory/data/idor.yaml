@@ -1,0 +1,303 @@
+slug: idor
+name: Insecure Direct Object Reference (IDOR / BOLA)
+owasp: A01:2021 – Broken Access Control
+description: 'IDOR (also known as BOLA – Broken Object Level Authorization in APIs) occurs when an application uses user-controllable
+  identifiers to reference internal objects without verifying that the requesting user is authorized to access that object.
+  Attackers enumerate or predict identifiers to access other users'' data, escalate privileges, or perform unauthorized operations.
+  IDOR is the most common vulnerability in modern web APIs.
+
+  '
+severity_range:
+  low: CVSS 5.4
+  high: CVSS 9.1
+references:
+- label: OWASP IDOR Testing Guide
+  url: https://owasp.org/www-project-web-security-testing-guide/latest/4-Web_Application_Security_Testing/05-Authorization_Testing/04-Testing_for_Insecure_Direct_Object_References
+- label: PortSwigger IDOR Research
+  url: https://portswigger.net/web-security/access-control/idor
+groups:
+- slug: horizontal-idor
+  name: Horizontal IDOR (Same Privilege Level)
+  description: Accessing other users' resources at the same privilege level by manipulating object identifiers.
+  difficulty: low
+  prerequisites:
+  - Application uses predictable or user-supplied identifiers for objects
+  - No authorization check that the requesting user owns the object
+  payloads:
+  - id: idor-horiz-001
+    title: Sequential ID parameter manipulation
+    payload_string: GET /api/users/123/profile -> change 123 to 124, 125, 126...
+    how_it_works: 'Sequential integer IDs are the most obvious IDOR vector. By incrementing or decrementing the ID in the
+      URL path or parameter, the attacker accesses adjacent users'' profiles, orders, or documents. If the application returns
+      other users'' data without checking that user 123 is the authenticated user, all records are accessible. This is the
+      first test on any endpoint with a numeric ID. Automated enumeration through a range of IDs can dump entire user databases.
+
+      '
+    prerequisites:
+    - API endpoint uses numeric sequential ID for object reference
+    - No ownership verification on the backend
+    waf_bypass_notes: Sequential ID enumeration is basic; no WAF bypass needed
+    severity_context: CVSS 7.5 – unauthorized access to all user records via ID enumeration
+    cve_refs: []
+    tags:
+    - idor
+    - horizontal
+    - sequential-id
+    - enumeration
+    - basic
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: idor-horiz-002
+    title: UUID IDOR via predictable generation
+    payload_string: GET /api/documents/550e8400-e29b-41d4-a716-446655440000
+    how_it_works: 'UUIDs (Universally Unique Identifiers) appear random but some versions are predictable. UUID v1 includes
+      a timestamp and MAC address, allowing prediction of other IDs generated near the same time. UUID v4 is random but may
+      be leaked in other API responses, logs, or the DOM. When a user creates resources whose IDs appear in shareable links,
+      other users'' UUIDs may be collectable via referrer logs or network interception. Even random UUIDs must be tested for
+      authorization, as they provide security through obscurity rather than proper access control.
+
+      '
+    prerequisites:
+    - API uses UUID for resource identification
+    - UUID v1 (time-based) or UUID leaked in other responses
+    waf_bypass_notes: UUID predictability varies by version; v1 is most predictable
+    severity_context: CVSS 6.5 – IDOR with UUID identifiers via prediction or leakage
+    cve_refs: []
+    tags:
+    - idor
+    - horizontal
+    - uuid
+    - predictability
+    - obscurity
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: idor-horiz-003
+    title: IDOR in file download endpoint
+    payload_string: GET /download?file_id=987 (when authenticated as different user)
+    how_it_works: 'File download endpoints that use database IDs to identify files are common IDOR targets. An attacker enumerates
+      file IDs to download documents belonging to other users, including tax records, medical documents, legal files, and
+      personal data. The impact depends on the sensitivity of the stored files. Unlike profile data which may be intentionally
+      visible, file downloads represent explicitly private content. Many applications implement this pattern for secure file
+      storage but omit authorization checks on the download handler.
+
+      '
+    prerequisites:
+    - File download endpoint uses user-controllable ID
+    - No verification that requesting user owns the file
+    waf_bypass_notes: Test file_id, document_id, attachment_id parameter variations
+    severity_context: CVSS 8.5 – unauthorized download of private user files
+    tags:
+    - idor
+    - horizontal
+    - file-download
+    - private-data
+    - enumeration
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: idor-horiz-004
+    title: IDOR in message/notification read
+    payload_string: GET /api/messages/456 (reading another user's private message)
+    how_it_works: 'Messaging systems, notification endpoints, and inbox APIs commonly suffer from IDOR when message IDs are
+      sequential or guessable. By iterating message IDs, an attacker reads all users'' private messages. This exposes confidential
+      communications, password reset links in notification systems, and sensitive business data. Messaging IDOR is particularly
+      impactful because users have a strong expectation of privacy for message content, and leaked messages can be used for
+      further social engineering.
+
+      '
+    prerequisites:
+    - Message/notification endpoint uses predictable ID
+    - No authorization verification
+    waf_bypass_notes: Message IDs often sequential; automate enumeration with Burp Intruder
+    severity_context: CVSS 8.0 – reading all users' private messages
+    cve_refs: []
+    tags:
+    - idor
+    - horizontal
+    - messaging
+    - private-data
+    - privacy
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: idor-horiz-005
+    title: IDOR in account settings update
+    payload_string: 'PUT /api/users/789/settings {"email": "attacker@evil.com"}'
+    how_it_works: 'Write-access IDOR on account settings endpoints allows modifying other users'' accounts. Changing another
+      user''s email address, phone number, or notification settings can be used to take over their account via password reset,
+      or to disable security alerts. Write-access IDOR is more impactful than read-access because it actively harms other
+      users. Many applications verify ownership for profile page reads but omit the check for API-based settings updates.
+
+      '
+    prerequisites:
+    - Account update API endpoint without ownership check
+    - Attacker can enumerate or know target user ID
+    waf_bypass_notes: PUT/PATCH methods; test write operations on other users' IDs
+    severity_context: CVSS 9.1 – account takeover via IDOR write on email/settings
+    cve_refs: []
+    tags:
+    - idor
+    - horizontal
+    - write-access
+    - account-takeover
+    - high-impact
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+- slug: vertical-idor
+  name: Vertical IDOR (Privilege Escalation)
+  description: Accessing admin or privileged resources by manipulating identifiers, gaining capabilities above the user's
+    assigned role.
+  difficulty: medium
+  prerequisites:
+  - Application has multiple privilege levels
+  - Authorization checks rely only on the identifier, not user role
+  payloads:
+  - id: idor-vert-001
+    title: Accessing admin-only endpoint with user ID
+    payload_string: GET /admin/users (authenticated as regular user)
+    how_it_works: 'Vertical privilege escalation via IDOR occurs when admin-only functionality is accessible to regular users
+      by directly accessing admin URLs. If the application shows admin menu items only in the UI but does not enforce admin-role
+      checks on the backend API endpoints, a regular user who knows admin URLs can access them. This is often called a ''broken
+      function level authorization'' issue. The admin user management page reveals all user data and admin capabilities.
+
+      '
+    prerequisites:
+    - Admin functionality accessible without role check on backend
+    - Regular user session token accepted by admin endpoint
+    waf_bypass_notes: No ID manipulation needed; just access admin URLs with user session
+    severity_context: CVSS 8.8 – regular user accesses admin functionality
+    cve_refs: []
+    tags:
+    - idor
+    - vertical
+    - privilege-escalation
+    - admin-access
+    - bfla
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: idor-vert-002
+    title: IDOR role field manipulation
+    payload_string: 'PUT /api/profile {"role": "admin"}'
+    how_it_works: 'When a user profile update API accepts a role field that is not filtered server-side, a user can elevate
+      their own role to admin by including role=admin in the update request. Mass assignment and IDOR combine here: the API
+      might intend for users to only update safe fields (name, bio) but an unprotected role field allows self-promotion. This
+      is the intersection of IDOR and mass assignment vulnerabilities. The attacker simply adds the role parameter to their
+      own profile update.
+
+      '
+    prerequisites:
+    - Profile update API does not filter sensitive fields
+    - Role field accepted and stored from user input
+    waf_bypass_notes: Add role, isAdmin, is_staff, permissions to any profile update request
+    severity_context: CVSS 9.8 – self-granted admin role via IDOR/mass assignment
+    cve_refs: []
+    tags:
+    - idor
+    - vertical
+    - role-escalation
+    - mass-assignment
+    - admin
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: idor-vert-003
+    title: IDOR to admin object operations
+    payload_string: DELETE /api/users/1 (deleting admin user as regular user)
+    how_it_works: 'IDOR in destructive operations is a high-impact variant. If a user can delete any resource by knowing its
+      ID (without ownership verification), they can delete other users'' content, the admin account, or system-critical resources.
+      Deleting user ID 1 (typically the first admin account) locks administrators out of the system. Some applications implement
+      read authorization but not delete authorization, assuming only authenticated users will have the delete functionality.
+
+      '
+    prerequisites:
+    - Delete endpoint lacks authorization check beyond authentication
+    - User can access delete endpoint with any object ID
+    waf_bypass_notes: DELETE method; test with admin resource IDs; destructive action
+    severity_context: CVSS 9.1 – destructive IDOR enabling deletion of admin accounts
+    cve_refs: []
+    tags:
+    - idor
+    - vertical
+    - destructive
+    - delete-operation
+    - critical
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+- slug: api-idor
+  name: API-Level IDOR (BOLA)
+  description: IDOR in REST/GraphQL APIs where object identifiers are passed in headers, JSON bodies, or parameters.
+  difficulty: medium
+  prerequisites:
+  - API accepts object identifiers in requests
+  - Server does not verify requester owns the referenced object
+  payloads:
+  - id: idor-api-001
+    title: BOLA in REST API path parameter
+    payload_string: 'GET /api/v1/orders/ORD-001234 HTTP/1.1
+
+      Authorization: Bearer <user_B_token>'
+    how_it_works: 'REST APIs commonly expose object IDs in URL paths. BOLA (Broken Object Level Authorization) is the API-specific
+      term for IDOR. User B accessing User A''s order by guessing or enumerating order IDs retrieves sensitive purchase information.
+      Modern REST APIs following RESTful conventions uniformly use path-based IDs, making this a universal test for any endpoint
+      following /resource/{id} patterns. OWASP considers BOLA the most critical API security risk.
+
+      '
+    prerequisites:
+    - REST API with path-based object identifiers
+    - No ownership check in API handler
+    waf_bypass_notes: No bypass needed; direct path manipulation; test all ID-based endpoints
+    severity_context: CVSS 7.5 – BOLA data exposure via REST API path parameter
+    cve_refs: []
+    tags:
+    - idor
+    - bola
+    - rest-api
+    - path-parameter
+    - owasp-api1
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: idor-api-002
+    title: IDOR via query parameter object ID
+    payload_string: GET /api/invoices?invoice_id=INV-5432 (another user's invoice)
+    how_it_works: 'Object references passed as URL query parameters are equally common IDOR vectors. Invoice IDs, report IDs,
+      and export IDs in query parameters allow easy manipulation. Financial document exposure (invoices, receipts, tax statements)
+      has direct legal and compliance implications beyond pure data breach. An attacker who can access another business''s
+      invoices can steal pricing information, vendor relationships, and financial performance data. Sequential or guessable
+      document numbers are particularly vulnerable.
+
+      '
+    prerequisites:
+    - Object ID in URL query parameter
+    - No session-object binding verification
+    waf_bypass_notes: Query parameter manipulation; test invoice_id, doc_id, report_id
+    severity_context: CVSS 8.0 – financial document exposure via query parameter IDOR
+    cve_refs: []
+    tags:
+    - idor
+    - api
+    - query-parameter
+    - financial-data
+    - invoice
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: idor-api-003
+    title: IDOR in JSON request body
+    payload_string: 'POST /api/share {"document_id": 9999, "recipient": "attacker@evil.com"}'
+    how_it_works: 'IDOR in POST request bodies occurs when object IDs in JSON payloads are not verified against the authenticated
+      user''s ownership. Sending another user''s document_id in a share request causes the server to send a sharing invitation
+      for a document the attacker does not own. Depending on the feature, this can exfiltrate other users'' documents to the
+      attacker''s email, or perform operations on objects the attacker should not access. This vector is often missed during
+      testing as testers focus on URL parameters.
+
+      '
+    prerequisites:
+    - API uses object IDs in JSON request body
+    - No ownership verification before acting on the referenced object
+    waf_bypass_notes: JSON body manipulation; WAFs may not inspect body for IDOR patterns
+    severity_context: CVSS 7.5 – document sharing IDOR exposing other users' files
+    cve_refs: []
+    tags:
+    - idor
+    - api
+    - json-body
+    - document-share
+    - exfiltration
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'

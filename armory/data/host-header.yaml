@@ -1,0 +1,373 @@
+slug: host-header
+name: Host Header Injection
+owasp: A07:2021 – Identification and Authentication Failures
+description: 'Host header injection occurs when an application uses the HTTP Host header without proper validation to construct
+  URLs, paths, or access controls. Attackers can manipulate the Host header to poison caches, forge password reset links,
+  bypass IP restrictions, or probe internal virtual hosts.
+
+  '
+severity_range:
+  low: CVSS 5.3 – cache poisoning, redirect manipulation
+  high: CVSS 8.8 – password reset hijacking, account takeover
+references:
+- label: PortSwigger Host Header Attacks
+  url: https://portswigger.net/web-security/host-header
+- label: OWASP Host Header Injection Testing
+  url: https://owasp.org/www-project-web-security-testing-guide/latest/4-Web_Application_Security_Testing/07-Input_Validation_Testing/17-Testing_for_Host_Header_Injection
+groups:
+- slug: password-reset-poisoning
+  name: Password Reset Link Poisoning
+  description: Injecting a malicious Host header to redirect password reset links to an attacker-controlled domain
+  difficulty: medium
+  prerequisites:
+  - Application generates password reset links using HTTP Host header
+  - No Host header validation
+  payloads:
+  - id: hosthdr-reset-001
+    title: Basic password reset link poisoning
+    payload_string: "POST /forgot-password HTTP/1.1\r\nHost: evil.com\r\n\r\nemail=victim@victim.com"
+    how_it_works: 'When the application generates a password reset email, it constructs the reset link using the Host header
+      value (e.g., "https://" + request.headers[''Host''] + "/reset?token=..."). By supplying Host: evil.com, the email sent
+      to the victim contains a link to https://evil.com/reset?token=SECRET_TOKEN. When the victim clicks the link, their password
+      reset token is sent to the attacker''s server. The attacker then uses the token to reset the victim''s password and
+      take over their account.
+
+      '
+    prerequisites:
+    - Password reset link built from Host header
+    - No Host header allowlist
+    waf_bypass_notes: Modify Host header directly; most WAFs don't validate Host for password reset flows
+    severity_context: CVSS 8.8 – account takeover via password reset token theft
+    cve_refs: []
+    tags:
+    - host-header
+    - password-reset
+    - account-takeover
+    - token-theft
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: hosthdr-reset-002
+    title: X-Forwarded-Host password reset poisoning
+    payload_string: "POST /forgot-password HTTP/1.1\r\nHost: victim.com\r\nX-Forwarded-Host: evil.com\r\n\r\nemail=victim@victim.com"
+    how_it_works: 'Applications running behind reverse proxies often trust X-Forwarded-Host to determine the externally visible
+      hostname. If the application uses request.get_host() or similar framework methods that check X-Forwarded-Host, the poisoned
+      value propagates into generated links. This technique works even when the Host header itself is validated against known
+      good values, since the proxy-forwarded override is a separate trust boundary.
+
+      '
+    prerequisites:
+    - Application trusts X-Forwarded-Host for URL generation
+    - Direct access to origin server (bypassing proxy) or proxy passes this header
+    waf_bypass_notes: X-Forwarded-Host is not always filtered by reverse proxies
+    severity_context: CVSS 8.8 – account takeover via X-Forwarded-Host token theft
+    cve_refs: []
+    tags:
+    - host-header
+    - x-forwarded-host
+    - password-reset
+    - account-takeover
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: hosthdr-reset-003
+    title: Password reset via X-Forwarded-Server injection
+    payload_string: "POST /forgot-password HTTP/1.1\r\nHost: victim.com\r\nX-Forwarded-Server: evil.com\r\n\r\nemail=victim@victim.com"
+    how_it_works: 'Some frameworks check multiple headers for the public-facing hostname: X-Forwarded-Server, X-HTTP-Host-Override,
+      X-Real-IP, or Forwarded (RFC 7239). If the application trusts X-Forwarded-Server and uses it for link generation, the
+      same password reset poisoning attack applies. This is a variation for applications that sanitize X-Forwarded-Host but
+      miss other forwarding headers.
+
+      '
+    prerequisites:
+    - Application uses X-Forwarded-Server for hostname in reset links
+    waf_bypass_notes: Less common header; often not inspected
+    severity_context: CVSS 8.8 – account takeover via alternative forwarded header injection
+    cve_refs: []
+    tags:
+    - host-header
+    - x-forwarded-server
+    - password-reset
+    - account-takeover
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: hosthdr-reset-004
+    title: Host header port injection for URL override
+    payload_string: "POST /forgot-password HTTP/1.1\r\nHost: victim.com:evil.com\r\n"
+    how_it_works: 'Some parsers treat the colon in the Host header as separating hostname from port, but if the port validation
+      is lax, the entire value after the colon may be passed through. An application that constructs reset_url = host + ''/reset?token=''
+      + token may produce https://victim.com:evil.com/reset?token=SECRET, which some URL parsers may interpret as victim.com
+      with port evil.com or as a malformed URL that resolves to evil.com. This exploits inconsistency between URL parser and
+      string concatenation.
+
+      '
+    prerequisites:
+    - Application does not validate Host port value
+    - URL construction via string concatenation
+    waf_bypass_notes: Non-standard port value; may not be filtered
+    severity_context: CVSS 6.5 – password reset URL manipulation via port injection
+    cve_refs: []
+    tags:
+    - host-header
+    - port-injection
+    - url-manipulation
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: hosthdr-reset-005
+    title: Ambiguous Host header with duplicate headers
+    payload_string: "POST /forgot-password HTTP/1.1\r\nHost: victim.com\r\nHost: evil.com\r\n"
+    how_it_works: 'HTTP/1.1 prohibits duplicate Host headers, but many servers accept them. RFC 7230 says a server receiving
+      multiple Host headers MUST respond with 400. In practice, some servers use the first, some use the last, and some concatenate.
+      If a WAF or load balancer uses the first Host header (victim.com) for routing, but the application backend uses the
+      last (evil.com) for link generation, the request bypasses host validation and poisons the reset link.
+
+      '
+    prerequisites:
+    - Application backend uses last Host header; WAF uses first
+    waf_bypass_notes: Duplicate headers exploit parser inconsistency between WAF and app
+    severity_context: CVSS 7.5 – host validation bypass via duplicate headers
+    cve_refs: []
+    tags:
+    - host-header
+    - duplicate-header
+    - bypass
+    - password-reset
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+- slug: web-cache-poisoning
+  name: Host Header Web Cache Poisoning
+  description: Using Host header injection to poison CDN/reverse proxy caches with malicious content
+  difficulty: high
+  prerequisites:
+  - Application reflects Host header in response without validation
+  - Response is cached by CDN or reverse proxy
+  payloads:
+  - id: hosthdr-cache-001
+    title: Host header cache poisoning for stored XSS
+    payload_string: "GET / HTTP/1.1\r\nHost: victim.com\"><script>alert(1)</script>\r\n"
+    how_it_works: 'If the application reflects the Host header in an HTML response (e.g., in a canonical link tag, redirect,
+      or resource URL) without encoding, an attacker can inject XSS via the Host header. If the response is then cached by
+      a CDN or reverse proxy, all subsequent users who receive the cached response will see the XSS payload. This converts
+      a reflected XSS into a persistent cached attack affecting all visitors.
+
+      '
+    prerequisites:
+    - Application reflects Host header unsanitized in HTML response
+    - Response is cacheable
+    waf_bypass_notes: Host header-based XSS may bypass input filters focused on body parameters
+    severity_context: CVSS 9.3 – persistent XSS via cache poisoning affecting all users
+    cve_refs: []
+    tags:
+    - host-header
+    - cache-poisoning
+    - xss
+    - persistent
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: hosthdr-cache-002
+    title: Host header redirect cache poisoning
+    payload_string: "GET /login HTTP/1.1\r\nHost: evil.com\r\n"
+    how_it_works: 'Applications that redirect using the Host header (e.g., redirecting http to https using 301 Location: https://[host]/[path])
+      can be poisoned. If the redirect response is cached, subsequent users receive a 301 redirect to the attacker''s domain.
+      Since 301 redirects are cached indefinitely by default, this is a persistent attack. The attacker crafts the initial
+      request with Host: evil.com to cache an evil redirect for the login page.
+
+      '
+    prerequisites:
+    - Application generates redirects using Host header
+    - Redirect response is cached by CDN
+    waf_bypass_notes: Send request before cached content exists; cache poisoning window is brief
+    severity_context: CVSS 8.8 – persistent redirect to phishing site for all users of cached resource
+    cve_refs: []
+    tags:
+    - host-header
+    - cache-poisoning
+    - redirect
+    - persistent
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: hosthdr-cache-003
+    title: Unkeyed Host header cache poisoning via CDN
+    payload_string: "GET /page HTTP/1.1\r\nHost: victim.com\r\nX-Host: evil.com\r\n"
+    how_it_works: 'CDNs typically use only the URL and Host header as cache keys. If an application uses a different header
+      (X-Host, X-Forwarded-Host) to build absolute URLs but this header is not part of the CDN''s cache key, injecting a malicious
+      value in the unkeyed header poisons the cache entry for the normal Host-based cache key. All users requesting the page
+      via the legitimate host receive the poisoned response with URLs pointing to evil.com.
+
+      '
+    prerequisites:
+    - CDN cache key does not include X-Host or X-Forwarded-Host
+    - Application uses unkeyed header for URL generation
+    waf_bypass_notes: Unkeyed header poisoning is difficult to detect and defend against
+    severity_context: CVSS 9.0 – persistent cache poisoning for all users via unkeyed header
+    cve_refs: []
+    tags:
+    - host-header
+    - cache-poisoning
+    - unkeyed
+    - cdn
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: hosthdr-cache-004
+    title: Host header SSRF via internal virtual hosting
+    payload_string: "GET /internal-api HTTP/1.1\r\nHost: localhost\r\n"
+    how_it_works: 'Web servers hosting multiple virtual hosts route requests based on the Host header. By sending a request
+      with Host: localhost or Host: 127.0.0.1, an attacker may reach an internal virtual host not accessible from the external
+      network. Applications that serve debug endpoints, admin panels, or internal APIs only on localhost can be accessed by
+      manipulating the Host header in requests to the public-facing server.
+
+      '
+    prerequisites:
+    - Server hosts internal virtual host on localhost/127.0.0.1
+    - No server-level Host validation for internal vhosts
+    waf_bypass_notes: 'Host: localhost often bypasses application-layer IP restrictions'
+    severity_context: CVSS 8.8 – access to internal admin panels via virtual host Host header
+    cve_refs: []
+    tags:
+    - host-header
+    - ssrf
+    - virtual-host
+    - localhost
+    - internal
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: hosthdr-cache-005
+    title: Absolute URL override via full URL in request line
+    payload_string: "GET http://evil.com/ HTTP/1.1\r\nHost: victim.com\r\n"
+    how_it_works: 'HTTP/1.1 technically allows a full absolute URL in the request line when making requests to proxy servers.
+      Some servers that accept requests both from clients and from upstream proxies may process the absolute URL in the request
+      line and ignore the Host header. By sending an absolute URL to evil.com in the request line while keeping Host: victim.com,
+      the server may proxy the request to evil.com (functioning as an open proxy) or exhibit unexpected routing behavior.
+
+      '
+    prerequisites:
+    - Server accepts absolute URLs in request line
+    - Server processes absolute URL destination rather than Host header
+    waf_bypass_notes: Absolute URL in request line bypasses Host-header-based routing
+    severity_context: CVSS 7.5 – open proxy behavior via absolute URL request exploitation
+    cve_refs: []
+    tags:
+    - host-header
+    - absolute-url
+    - open-proxy
+    - request-line
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+- slug: routing-bypass
+  name: Virtual Host Routing and Bypass
+  description: Exploiting Host header for routing manipulation, WAF bypass, and internal service access
+  difficulty: medium
+  prerequisites:
+  - Application routes requests based on Host header
+  payloads:
+  - id: hosthdr-route-001
+    title: Internal service access via Host header override
+    payload_string: "GET /admin HTTP/1.1\r\nHost: internal-admin.company.local\r\n"
+    how_it_works: 'In microservice architectures, service routing is often done via Host header. A public API gateway may
+      forward requests to different internal services based on Host. By guessing or discovering internal service hostnames
+      from DNS, error messages, or documentation, an attacker can route requests to internal services not intended to be publicly
+      accessible.
+
+      '
+    prerequisites:
+    - API gateway routes by Host header to internal microservices
+    - Internal service hostname discoverable
+    waf_bypass_notes: Internal hostnames unlikely to be in WAF's allowlist
+    severity_context: CVSS 8.8 – direct access to internal microservices via Host header routing
+    cve_refs: []
+    tags:
+    - host-header
+    - microservices
+    - routing
+    - internal
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: hosthdr-route-002
+    title: IP-based auth bypass via Host header
+    payload_string: "GET /admin HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+    how_it_works: 'Some applications implement IP-based access control by checking the Host header rather than the actual
+      client IP address. An application that allows access to admin features when Host is 127.0.0.1 or localhost can be bypassed
+      by simply setting Host: 127.0.0.1 in an external request. This is an insecure access control pattern that confuses the
+      destination hostname with the client''s IP address.
+
+      '
+    prerequisites:
+    - Application grants access based on Host header value being 127.0.0.1
+    - No actual IP verification
+    waf_bypass_notes: Standard HTTP request with modified Host header
+    severity_context: CVSS 9.8 – IP-based access control bypass via Host header manipulation
+    cve_refs: []
+    tags:
+    - host-header
+    - ip-bypass
+    - access-control
+    - localhost
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: hosthdr-route-003
+    title: WAF bypass via Host header routing to unprotected backend
+    payload_string: "GET /login HTTP/1.1\r\nHost: bypass.victim.com\r\n"
+    how_it_works: 'WAF rules often apply only to specific virtual hosts in the configuration. If an attacker discovers a secondary
+      virtual host (test.victim.com, bypass.victim.com, or a legacy hostname) that routes to the same backend application
+      but is not covered by WAF rules, they can bypass security controls entirely. Attack traffic sent with the unprotected
+      virtual host''s name reaches the application without inspection.
+
+      '
+    prerequisites:
+    - Backend serves same application for multiple virtual host names
+    - WAF only configured for primary hostname
+    waf_bypass_notes: Bypass relies on WAF misconfiguration for secondary vhosts
+    severity_context: CVSS 8.8 – full WAF bypass enabling unfiltered exploitation
+    cve_refs: []
+    tags:
+    - host-header
+    - waf-bypass
+    - virtual-host
+    - secondary-domain
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: hosthdr-route-004
+    title: Host header injection in OAuth implicit flow redirect
+    payload_string: "GET /oauth/callback HTTP/1.1\r\nHost: evil.com\r\n"
+    how_it_works: 'OAuth implementations that use the Host header to construct the redirect_uri for comparison against the
+      registered URI can be tricked into accepting mismatched URIs. If the callback endpoint builds redirect_uri from the
+      Host header and validates it against a stored value, an attacker who can manipulate the Host can cause the validation
+      to pass for an evil domain, leaking OAuth codes or tokens. In practice this lets an attacker steal authorization codes
+      by routing the OAuth callback to an attacker-controlled server and then exchanging those codes for access tokens without
+      ever knowing the victim''s credentials. Real-world impact includes full account takeover when the application trusts
+      the obtained access token without secondary validation of the originating session context.
+
+      '
+    prerequisites:
+    - OAuth callback builds redirect_uri from Host header
+    - Comparison against stored value uses constructed URL
+    waf_bypass_notes: OAuth endpoints often have minimal WAF inspection
+    severity_context: CVSS 9.0 – OAuth token theft via Host header injection in callback
+    cve_refs: []
+    tags:
+    - host-header
+    - oauth
+    - redirect
+    - token-theft
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: hosthdr-route-005
+    title: Subdomain injection via port confusion
+    payload_string: "GET / HTTP/1.1\r\nHost: victim.com:80@evil.com\r\n"
+    how_it_works: 'URL parsers differ in how they handle unusual Host header values containing @ or other special characters.
+      Some parsers see victim.com:80 as the host and @evil.com as ignored, while others see evil.com as the actual host with
+      victim.com:80 as credentials. By exploiting this ambiguity, an attacker can make the application construct URLs pointing
+      to evil.com while the parser used for routing or access control sees victim.com. This is a parser inconsistency attack.
+
+      '
+    prerequisites:
+    - Multiple parsers process Host header for different purposes
+    - Parser inconsistency in @ handling
+    waf_bypass_notes: Non-standard characters in Host header may bypass normalization
+    severity_context: CVSS 7.5 – URL construction manipulation via parser confusion
+    cve_refs: []
+    tags:
+    - host-header
+    - parser-confusion
+    - at-sign
+    - port
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'

