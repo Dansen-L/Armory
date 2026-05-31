@@ -1,0 +1,376 @@
+slug: mass-assignment
+name: Mass Assignment
+owasp: A01:2021 – Broken Access Control
+description: 'Mass assignment vulnerabilities arise when an application automatically binds request parameters to model attributes
+  without an explicit whitelist, allowing attackers to set fields like is_admin, role, or balance that were never intended
+  to be user-controlled. Common in Rails, Django REST Framework, Spring, and similar frameworks with ORM auto-binding.
+
+  '
+severity_range:
+  low: CVSS 5.3 – unintended field modification
+  high: CVSS 9.8 – privilege escalation to admin role
+references:
+- label: OWASP Mass Assignment Cheat Sheet
+  url: https://cheatsheetseries.owasp.org/cheatsheets/Mass_Assignment_Cheat_Sheet.html
+- label: OWASP API Security API6 Mass Assignment
+  url: https://owasp.org/API-Security/editions/2023/en/0xa6-unrestricted-access-to-sensitive-business-flows/
+- label: PortSwigger Mass Assignment Web Security Academy
+  url: https://portswigger.net/web-security/api-testing/lab-exploiting-mass-assignment-vulnerability
+groups:
+- slug: role-escalation
+  name: Role and Privilege Escalation
+  description: Setting admin, role, or privilege fields via mass assignment to gain elevated access
+  difficulty: low
+  prerequisites:
+  - Application auto-binds request body to ORM model without field whitelist
+  payloads:
+  - id: massign-role-001
+    title: Admin flag injection via JSON body
+    payload_string: '{"username":"user","password":"pass","is_admin":true}'
+    how_it_works: 'Many frameworks (Rails, Django REST Framework, Grails) automatically map JSON body fields to model attributes
+      during creation or update operations. If the model has an is_admin boolean field and the application doesn''t explicitly
+      exclude it from mass assignment, an attacker simply adds is_admin:true to the registration or profile update request.
+      The field is saved to the database, giving the attacker administrative privileges. No additional exploitation is needed.
+
+      '
+    prerequisites:
+    - ORM auto-binding without permit/whitelist configuration
+    - is_admin or similar field exists on the user model
+    waf_bypass_notes: Normal JSON; WAFs cannot distinguish legitimate from malicious fields without schema awareness
+    severity_context: CVSS 9.8 – direct privilege escalation to admin; account takeover
+    cve_refs:
+    - CVE-2012-2660
+    tags:
+    - mass-assignment
+    - privilege-escalation
+    - admin
+    - json
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: massign-role-002
+    title: Role field injection in user registration
+    payload_string: '{"email":"attacker@evil.com","password":"pass","role":"admin"}'
+    how_it_works: 'During user registration, if the framework binds all POST body fields to the User model, an attacker can
+      include a role field set to a privileged value. Rails'' old attr_accessible/attr_protected system and similar frameworks
+      in other languages are vulnerable when not configured to explicitly whitelist allowed parameters. The attacker receives
+      an admin account upon registration. This is extremely common in OWASP''s historical Top 10 and is frequently found in
+      REST APIs.
+
+      '
+    prerequisites:
+    - Registration endpoint binds request body to user model without strong parameters
+    waf_bypass_notes: Standard JSON POST body; indistinguishable from legitimate registration
+    severity_context: CVSS 9.8 – privilege escalation via self-registration as admin
+    cve_refs:
+    - CVE-2012-1099
+    tags:
+    - mass-assignment
+    - role
+    - registration
+    - privilege-escalation
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: massign-role-003
+    title: Account verification bypass via confirmed field
+    payload_string: '{"email":"attacker@evil.com","password":"pass","confirmed":true,"email_verified":true}'
+    how_it_works: 'Applications requiring email verification store a confirmed or email_verified boolean on the user model.
+      If the registration endpoint mass-assigns all parameters, an attacker can set confirmed:true to skip the email verification
+      step entirely. This bypasses email-based identity verification, potentially allowing account creation with false identities
+      or exploitation of features restricted to verified users.
+
+      '
+    prerequisites:
+    - Email verification implemented as a model field
+    - Registration endpoint does not filter confirmation-related fields
+    waf_bypass_notes: Standard JSON; no special encoding needed
+    severity_context: CVSS 7.5 – bypasses email verification, enabling fraud or unauthorized access
+    cve_refs:
+    - CVE-2012-1099
+    tags:
+    - mass-assignment
+    - verification-bypass
+    - registration
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: massign-role-004
+    title: Account balance manipulation via numeric field injection
+    payload_string: '{"username":"user","address":"123 Main St","account_balance":99999.99}'
+    how_it_works: 'Profile or account update endpoints that mass-assign request parameters can inadvertently expose financial
+      fields. By including account_balance, credits, or points in a profile update request, an attacker can set arbitrary
+      monetary values. This is a business logic impact of mass assignment that goes beyond privilege escalation to direct
+      financial fraud. Many e-commerce, fintech, and SaaS platforms are affected.
+
+      '
+    prerequisites:
+    - Profile update endpoint binds all fields including financial attributes
+    waf_bypass_notes: Numeric values in JSON; no bypass needed
+    severity_context: CVSS 9.1 – direct financial impact; credits/balance manipulation
+    cve_refs:
+    - CVE-2012-3424
+    tags:
+    - mass-assignment
+    - balance-manipulation
+    - business-logic
+    - financial
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: massign-role-005
+    title: Plan/subscription tier escalation
+    payload_string: '{"name":"John","subscription_plan":"enterprise","features":["all"]}'
+    how_it_works: 'SaaS applications storing subscription plan as a model field are vulnerable to mass assignment privilege
+      escalation. By including subscription_plan or tier in a profile update request, an attacker can upgrade their account
+      to enterprise or unlimited tier for free. The vulnerability requires only that the update endpoint does not explicitly
+      exclude plan-related fields from parameter binding.
+
+      '
+    prerequisites:
+    - Subscription plan stored as user model field
+    - Update endpoint lacks field filtering
+    waf_bypass_notes: String value in JSON; not distinguishable by WAF
+    severity_context: CVSS 8.6 – free access to paid features; direct revenue impact
+    cve_refs: []
+    tags:
+    - mass-assignment
+    - subscription
+    - privilege-escalation
+    - business-logic
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+- slug: nested-object-assignment
+  name: Nested Object Mass Assignment
+  description: Exploiting nested model relationships and associated object fields via nested parameter binding
+  difficulty: medium
+  prerequisites:
+  - Application binds nested JSON structures to related models
+  payloads:
+  - id: massign-nest-001
+    title: Rails nested attributes association exploit
+    payload_string: '{"user":{"name":"attacker","role_attributes":{"name":"admin","id":1}}}'
+    how_it_works: 'Rails'' accepts_nested_attributes_for allows parent models to update associated models via nested parameters.
+      If the association''s permitted parameters aren''t strictly controlled, an attacker can modify related model fields.
+      By crafting a request with role_attributes containing an existing role''s ID and new attributes, the attacker may modify
+      the role model itself (affecting all users with that role) or create a new privileged role for their account.
+
+      '
+    prerequisites:
+    - Rails model with accepts_nested_attributes_for :role
+    - Nested attributes not excluded from strong parameters
+    waf_bypass_notes: Nested JSON structure; standard HTTP POST body
+    severity_context: CVSS 9.0 – escalation via role model manipulation
+    cve_refs:
+    - CVE-2012-3424
+    tags:
+    - mass-assignment
+    - rails
+    - nested-attributes
+    - privilege-escalation
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: massign-nest-002
+    title: Foreign key ID injection for relationship hijacking
+    payload_string: '{"order":{"items":["book1"],"user_id":1,"discount_id":99}}'
+    how_it_works: 'Applications that expose foreign key fields (user_id, organization_id, discount_id) in mass assignment
+      allow attackers to associate objects with arbitrary records. By setting user_id to another user''s ID, an attacker can
+      create orders attributed to victims. By setting discount_id to a restricted discount code, they can apply unauthorized
+      discounts. This type of IDOR+mass-assignment combination is extremely common in REST APIs.
+
+      '
+    prerequisites:
+    - ORM model exposes _id foreign key fields in mass assignment
+    waf_bypass_notes: Standard integer values; no bypass needed
+    severity_context: CVSS 8.1 – ownership fraud, unauthorized discount application
+    cve_refs: []
+    tags:
+    - mass-assignment
+    - foreign-key
+    - idor
+    - relationship-hijacking
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: massign-nest-003
+    title: Django REST Framework WritableField bypass
+    payload_string: '{"username":"user","profile":{"verified":true,"staff":true}}'
+    how_it_works: 'Django REST Framework serializers that use depth=N or manually include nested serializers may expose writable
+      fields on related models. An attacker includes nested profile data with staff:true or is_staff:true in a user update
+      request. If the ProfileSerializer doesn''t explicitly set read_only=True on privilege fields, the nested write succeeds.
+      This is a framework-specific mass assignment pattern common in Django REST APIs.
+
+      '
+    prerequisites:
+    - DRF serializer includes writable nested serializer for profile
+    - Profile serializer does not mark privileged fields as read_only
+    waf_bypass_notes: Standard JSON nested object
+    severity_context: CVSS 9.0 – staff/admin escalation via nested DRF serializer
+    cve_refs: []
+    tags:
+    - mass-assignment
+    - django
+    - drf
+    - serializer
+    - privilege-escalation
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: massign-nest-004
+    title: created_at / updated_at timestamp forgery
+    payload_string: '{"content":"Hello","created_at":"2020-01-01T00:00:00Z","user_id":1}'
+    how_it_works: 'Applications that mass-assign timestamp fields allow attackers to forge record creation dates. This can
+      affect audit trails, compliance reporting, rate limiting by time window, or ordering-based pagination. Setting created_at
+      to a past date can backdate records to bypass time-based restrictions. While not always a direct security impact, it
+      undermines data integrity and forensic analysis.
+
+      '
+    prerequisites:
+    - ORM exposes created_at/updated_at in mass assignment
+    waf_bypass_notes: ISO 8601 timestamp; standard JSON
+    severity_context: CVSS 5.3 – data integrity violation; audit log tampering
+    cve_refs: []
+    tags:
+    - mass-assignment
+    - timestamp-forgery
+    - audit-bypass
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: massign-nest-005
+    title: GraphQL variable injection for mass assignment
+    payload_string: "mutation {\n  updateUser(input: {\n    name: \"attacker\"\n    role: \"admin\"\n    isActive: true\n\
+      \    emailVerified: true\n  }) { id name role }\n}\n"
+    how_it_works: 'GraphQL mutations that accept input types may expose all model fields in the input type without explicit
+      exclusion. If the InputType for updateUser includes role or isAdmin fields that exist on the underlying model, an attacker
+      can set them directly. Unlike REST APIs where the framework binding is implicit, in GraphQL the input type schema explicitly
+      defines what''s writable—but developers often forget to exclude privileged fields.
+
+      '
+    prerequisites:
+    - GraphQL mutation input type includes privileged model fields
+    - No resolver-level authorization on sensitive field assignment
+    waf_bypass_notes: GraphQL requests may not be inspected by WAFs configured for REST
+    severity_context: CVSS 9.0 – privilege escalation via GraphQL mutation input type
+    cve_refs: []
+    tags:
+    - mass-assignment
+    - graphql
+    - privilege-escalation
+    - mutation
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+- slug: api-parameter-binding
+  name: API Framework Parameter Binding
+  description: Language/framework-specific mass assignment via form data, PATCH requests, and body binding
+  difficulty: low
+  prerequisites:
+  - REST API that binds form or JSON body to model object
+  payloads:
+  - id: massign-api-001
+    title: HTTP PATCH with sensitive field override
+    payload_string: "PATCH /api/users/42 HTTP/1.1\r\n\r\n{\"name\":\"user\",\"is_staff\":true}"
+    how_it_works: 'HTTP PATCH requests are intended for partial updates, and many APIs bind the entire PATCH body to the model.
+      Unlike PUT (full replacement), PATCH semantics suggest that only specified fields change—but if the model binding doesn''t
+      whitelist fields, any field in the body is updated. Sending a PATCH with is_staff:true alongside a legitimate field
+      change grants admin privileges while appearing to be a routine profile update.
+
+      '
+    prerequisites:
+    - PATCH endpoint binds body fields without allowlist
+    waf_bypass_notes: Mixed legitimate and malicious fields in single request
+    severity_context: CVSS 8.8 – privilege escalation via partial update abuse
+    cve_refs:
+    - CVE-2012-2660
+    tags:
+    - mass-assignment
+    - http-patch
+    - api
+    - privilege-escalation
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: massign-api-002
+    title: Spring Boot @RequestBody binding with ignored fields
+    payload_string: '{"firstName":"John","lastName":"Doe","authorities":[{"authority":"ROLE_ADMIN"}]}'
+    how_it_works: 'Spring Boot''s @RequestBody annotation deserializes JSON directly into Java POJOs. If the DTO (Data Transfer
+      Object) or the entity class itself is used as the request body type (rather than a separate DTO), all Jackson-mappable
+      fields are writable. By including authorities, roles, or accountNonExpired fields, an attacker modifies Spring Security''s
+      user details. This is common when developers skip creating separate DTO classes and expose JPA entities directly.
+
+      '
+    prerequisites:
+    - Spring controller uses JPA entity directly as @RequestBody
+    - Entity includes Spring Security UserDetails fields
+    waf_bypass_notes: JSON deserialization; add @JsonIgnore to sensitive entity fields as a fix
+    severity_context: CVSS 9.8 – admin role injection via Spring entity binding
+    cve_refs: []
+    tags:
+    - mass-assignment
+    - spring
+    - java
+    - authorities
+    - privilege-escalation
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: massign-api-003
+    title: Express.js body-parser with model spread
+    payload_string: '{"name":"user","__proto__":{"isAdmin":true}}'
+    how_it_works: 'Node.js/Express applications that spread request body directly into database operations ({...user, ...req.body})
+      or use Object.assign() are vulnerable to both mass assignment and prototype pollution simultaneously. The __proto__
+      key in the request body pollutes JavaScript''s Object prototype, affecting all subsequently created objects. Combined
+      with the spread assignment, isAdmin becomes true on both the user object and the Object prototype.
+
+      '
+    prerequisites:
+    - Express app spreads req.body directly into user object
+    - No prototype pollution prevention
+    waf_bypass_notes: Appears as normal JSON; __proto__ key often not filtered
+    severity_context: CVSS 9.8 – privilege escalation + prototype pollution
+    cve_refs: []
+    tags:
+    - mass-assignment
+    - nodejs
+    - prototype-pollution
+    - privilege-escalation
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: massign-api-004
+    title: Ruby on Rails params without permit
+    payload_string: "POST /users HTTP/1.1\r\n\r\nuser[name]=attacker&user[is_admin]=1&user[role]=superuser"
+    how_it_works: 'Rails'' strong parameters system requires explicitly calling .permit() on params before mass assignment.
+      Code that uses params[:user] directly instead of params.require(:user).permit(:name, :email) allows all submitted parameters.
+      Rails form encoding uses nested bracket notation (user[field]) that maps directly to the model''s attributes hash. This
+      is the original Rails mass assignment vulnerability pattern.
+
+      '
+    prerequisites:
+    - Rails controller uses params[:user] or params.require(:user) without .permit()
+    - Rails app pre-4.x or controller bypasses strong parameters
+    waf_bypass_notes: URL-encoded form data; add is_admin param directly
+    severity_context: CVSS 9.8 – full privilege escalation; the original Rails CVE-2012-2660 pattern
+    cve_refs:
+    - CVE-2012-2660
+    - CVE-2012-2661
+    tags:
+    - mass-assignment
+    - rails
+    - form-data
+    - strong-parameters
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: massign-api-005
+    title: FastAPI Pydantic model with sensitive included fields
+    payload_string: '{"username":"attacker","is_superuser":true,"is_verified":true,"hashed_password":"$2b$12$custom_hash"}'
+    how_it_works: 'FastAPI uses Pydantic models for request validation. If developers reuse the same Pydantic model for both
+      API input and database writes (instead of separate Create/Update schemas), all model fields become writable via the
+      API. Including is_superuser or hashed_password allows privilege escalation or direct password hash injection. The Pydantic
+      validation only checks types and constraints, not which fields should be user-controlled.
+
+      '
+    prerequisites:
+    - FastAPI endpoint uses the same Pydantic model for input and DB write
+    - Model includes privileged fields like is_superuser
+    waf_bypass_notes: Standard JSON; FastAPI's validation provides no security boundary
+    severity_context: CVSS 9.8 – superuser creation or password hash injection
+    cve_refs: []
+    tags:
+    - mass-assignment
+    - fastapi
+    - python
+    - pydantic
+    - privilege-escalation
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'

