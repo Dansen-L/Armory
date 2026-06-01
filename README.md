@@ -76,6 +76,7 @@ armory info --cve CVE-2021-44228
 | Key | Action |
 |-----|--------|
 | ↑ ↓ / j k | Navigate list items |
+| Tab / Shift+Tab | Move focus between panes/sections |
 | Enter | Select / drill down |
 | Esc | Go back one level |
 | q | Quit (from top level) |
