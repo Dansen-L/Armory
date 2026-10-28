@@ -321,5 +321,3 @@ groups:
 - CVE IDs must be verifiable via the NVD API — use `cve_refs: []` rather than invented IDs
 - `how_it_works` must be ≥ 3 sentences in your own words
 
----
-*Built with [claude-pentest-harness](https://github.com/Dansen-L/claude-pentest-harness); post-build fixes applied by hand.*
